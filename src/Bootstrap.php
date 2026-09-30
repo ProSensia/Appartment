@@ -109,10 +109,43 @@ if (!function_exists('e')) {
     }
 }
 
+if (!function_exists('detect_base_url')) {
+    /**
+     * Work out the URL prefix of the folder holding index.php.
+     *
+     * Config can override this (set app.base_url to a non-empty string), but the
+     * default is derived from SCRIPT_NAME so the app runs correctly whether it
+     * is at /flatmate/, /Appartment/, or the vhost root, with no editing.
+     */
+    function detect_base_url(): string
+    {
+        $configured = (string) config('app.base_url', '');
+        if ($configured !== '') {
+            return rtrim($configured, '/');
+        }
+
+        // SCRIPT_NAME is e.g. /Appartment/login.php -> /Appartment
+        $script = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? ''));
+        $dir    = rtrim(str_replace('\\', '/', dirname($script)), '/');
+
+        // The API lives in api/, so strip it to reach the app root.
+        if (str_ends_with($dir, '/api')) {
+            $dir = substr($dir, 0, -4);
+        }
+
+        // dirname('/index.php') is '/', which already means "web root".
+        return $dir === '/' || $dir === '.' ? '' : $dir;
+    }
+}
+
 if (!function_exists('base_url')) {
     function base_url(string $path = ''): string
     {
-        return rtrim((string) config('app.base_url', ''), '/') . '/' . ltrim($path, '/');
+        $base = detect_base_url();
+        if ($path === '') {
+            return $base === '' ? '/' : $base;
+        }
+        return ($base === '' ? '' : $base) . '/' . ltrim($path, '/');
     }
 }
 
@@ -266,7 +299,7 @@ if (!function_exists('require_admin')) {
         require_login();
         if (!Auth::isAdmin()) {
             flash('danger', 'That area is restricted to the apartment admin.');
-            redirect('dashboard.php');
+            redirect('index.php');
         }
     }
 }

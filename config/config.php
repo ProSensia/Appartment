@@ -41,8 +41,11 @@ return [
         'env'           => 'local',            // local | production
         'timezone'      => 'Asia/Dhaka',
 
-        // Absolute URL to the folder that contains index.php
-        'base_url'      => '/flatmate',
+        // URL prefix of the folder containing index.php.
+        // Leave EMPTY ('') to auto-detect, which works at /flatmate/,
+        // /Appartment/, or the vhost root. Set an explicit value only if the
+        // app is reached through a rewrite that hides the real path.
+        'base_url'      => '',
 
         'currency'      => '৳',               // BDT
         'currency_code' => 'BDT',
