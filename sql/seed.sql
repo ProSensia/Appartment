@@ -486,16 +486,17 @@ VALUES
 --       weekly → MOD(FLOOR(DATEDIFF(date,'1970-01-01')/7) + offset, n)
 --     Past days are marked done (every 9th is 'skipped'); today/future pending.
 -- ===========================================================================
+-- The assignee is resolved by JOINing a numbered rotation pool on slot position.
+-- This used to be a correlated
+--   (SELECT id FROM users ... ORDER BY id LIMIT 1 OFFSET l.pos)
+-- which MySQL rejects: a subquery's LIMIT/OFFSET cannot reference a column of
+-- the enclosing query. `slot` counts the pool-mates with a smaller id, which
+-- reproduces "ORDER BY id, index n" exactly while staying portable back to
+-- MySQL 5.6 -- no window functions.
 INSERT INTO `chore_tasks` (`chore_area_id`,`assigned_user_id`,`task_date`,`status`,`completed_at`,`notes`)
 SELECT
   l.`area_id`,
-  (SELECT u2.`id` FROM `users` u2
-     WHERE u2.`status` = 'active'
-       AND ( (l.`scope` = 'group' AND u2.`duty_group_id` = l.`group_id`)
-          OR (l.`scope` = 'room'  AND u2.`room_id`       = l.`room_id`)
-          OR  l.`scope` = 'common' )
-     ORDER BY u2.`id`
-     LIMIT 1 OFFSET l.`pos`),
+  p.`user_id`,
   l.`task_date`,
   CASE
     WHEN l.`task_date` <  CURDATE() THEN IF(MOD(l.`seq`, 9) = 0, 'skipped', 'done')
@@ -516,28 +517,51 @@ FROM (
   SELECT
     (g1.n * 6 + g2.n)                       AS `seq`,
     a.`id`                                   AS `area_id`,
-    a.`scope`,
-    a.`duty_group_id`                        AS `group_id`,
-    a.`room_id`,
     DATE_ADD(DATE_SUB(@ws, INTERVAL 14 DAY), INTERVAL (g1.n * 6 + g2.n) DAY) AS `task_date`,
     MOD(
       IF(a.`frequency` = 'weekly',
          FLOOR(DATEDIFF(DATE_ADD(DATE_SUB(@ws, INTERVAL 14 DAY), INTERVAL (g1.n*6+g2.n) DAY), '1970-01-01') / 7),
          DATEDIFF(DATE_ADD(DATE_SUB(@ws, INTERVAL 14 DAY), INTERVAL (g1.n*6+g2.n) DAY), '1970-01-01'))
       + a.`rotation_offset`,
-      GREATEST((SELECT COUNT(*) FROM `users` u3
-                  WHERE u3.`status` = 'active'
-                    AND ( (a.`scope` = 'group' AND u3.`duty_group_id` = a.`duty_group_id`)
-                       OR (a.`scope` = 'room'  AND u3.`room_id`       = a.`room_id`)
-                       OR  a.`scope` = 'common' )), 1)
+      GREATEST(s.`pool_size`, 1)
     ) AS `pos`
   FROM `chore_areas` a
+  JOIN (
+    -- How many active residents each area rotates over.
+    SELECT a2.`id` AS `area_id`, COUNT(u.`id`) AS `pool_size`
+    FROM `chore_areas` a2
+    LEFT JOIN `users` u
+      ON u.`status` = 'active'
+     AND ( (a2.`scope` = 'group' AND u.`duty_group_id` = a2.`duty_group_id`)
+        OR (a2.`scope` = 'room'  AND u.`room_id`       = a2.`room_id`)
+        OR  a2.`scope` = 'common' )
+    GROUP BY a2.`id`
+  ) s ON s.`area_id` = a.`id`
   CROSS JOIN (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) g1
   CROSS JOIN (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) g2
   WHERE a.`is_active` = 1
     AND ( (1 << WEEKDAY(DATE_ADD(DATE_SUB(@ws, INTERVAL 14 DAY), INTERVAL (g1.n*6+g2.n) DAY)))
          & a.`weekday_mask`) > 0
-) l;
+) l
+JOIN (
+  -- The rotation pool itself, numbered from 0 so it can be addressed by slot.
+  -- slot = how many pool-mates have a smaller id  ==  index in ORDER BY id.
+  SELECT a.`id` AS `area_id`,
+         u.`id` AS `user_id`,
+         (SELECT COUNT(*)
+            FROM `users` ub
+           WHERE ub.`status` = 'active'
+             AND ub.`id` < u.`id`
+             AND ( (a.`scope` = 'group' AND ub.`duty_group_id` = a.`duty_group_id`)
+                OR (a.`scope` = 'room'  AND ub.`room_id`       = a.`room_id`)
+                OR  a.`scope` = 'common' )) AS `slot`
+  FROM `chore_areas` a
+  JOIN `users` u
+    ON u.`status` = 'active'
+   AND ( (a.`scope` = 'group' AND u.`duty_group_id` = a.`duty_group_id`)
+      OR (a.`scope` = 'room'  AND u.`room_id`       = a.`room_id`)
+      OR  a.`scope` = 'common' )
+) p ON p.`area_id` = l.`area_id` AND p.`slot` = l.`pos`;
 
 -- Stagger completion timestamps so the "recently done" feed looks organic
 UPDATE `chore_tasks` SET `completed_by` = `assigned_user_id`

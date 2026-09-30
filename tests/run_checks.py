@@ -16,6 +16,7 @@ CHECKS = [
     ("SQL schema/seed parses, FKs + views + insert columns resolve", ".validate_sql.py"),
     ("INSERT column/value arity (MySQL error 1136)", "tests/check_insert_arity.py"),
     ("INSERT arity checker self-test", "tests/check_insert_arity_test.py"),
+    ("MySQL-only restrictions (subquery LIMIT, error 1093)", "tests/check_sql_restrictions.py"),
     ("PDO placeholder bindings (no unbound :names)", "tests/check_bindings.py"),
     ("PDO placeholder reuse (no duplicate :names)", "tests/check_placeholders.py"),
     ("Cross-class references resolve", "tests/check_references.py"),
