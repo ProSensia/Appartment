@@ -12,7 +12,8 @@ if (Auth::check()) {
 
 $error    = null;
 $email    = '';
-$redirect = $_GET['next'] ?? 'index.php';
+// The form posts this, but it may also arrive on the URL from a deep link.
+$redirect = safe_page($_POST['next'] ?? $_GET['next'] ?? null);
 
 // ---- POST: password sign-in ------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -31,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = (string) ($result['error'] ?? 'Sign-in failed. Please try again.');
         } else {
             flash('success', 'Welcome back!');
-            redirect(preg_match('/^[\w\-.]+$/', $redirect) === 1 ? $redirect . '.php' : 'index.php');
+            redirect($redirect);
         }
     } catch (RuntimeException $e) {
         $error = $e->getMessage();

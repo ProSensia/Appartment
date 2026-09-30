@@ -214,6 +214,30 @@ if (!function_exists('redirect')) {
     }
 }
 
+if (!function_exists('safe_page')) {
+    /**
+     * Normalise a `?next=` return path into a real page in this app.
+     *
+     * The value reaches us on the URL and round-trips through a hidden field, so
+     * it can be "chores", "chores.php", "./chores.php" or an absolute URL. Only
+     * the file name is kept, exactly one ".php" is applied, and anything outside
+     * the allow-list falls back to the dashboard. That prevents both the
+     * "index.php.php" double-extension and any open-redirect/path-traversal.
+     */
+    function safe_page(?string $requested, string $fallback = 'index.php'): string
+    {
+        static $allowed = [
+            'index', 'chores', 'expenses', 'meals',
+            'notices', 'residents', 'join', 'login',
+        ];
+
+        $name = basename(str_replace('\\', '/', (string) $requested));
+        $name = strtolower(trim(preg_replace('/\.php$/i', '', $name) ?? ''));
+
+        return in_array($name, $allowed, true) ? $name . '.php' : $fallback;
+    }
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Flash messages                                                             */
 /* -------------------------------------------------------------------------- */

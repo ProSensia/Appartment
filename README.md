@@ -225,6 +225,7 @@ bootstrap, so a page only downloads the controller it needs.
 | Import "succeeds" but every page is empty / errors on a missing table | The client wasn't pointed at a database. Both SQL files have `CREATE DATABASE`/`USE` commented out — pass the name on the CLI or select it in phpMyAdmin first. |
 | `#1136 Column count doesn't match value count` | An `INSERT` lists more columns than values. `tests/check_insert_arity.py` catches this statically; run `python tests\run_checks.py`. |
 | `strict_types declaration must be the very first statement` | The file starts with a UTF-8 BOM (invisible in most editors). Re-save the file as UTF-8 **without BOM**; `tests/check_php_preamble.py` finds every affected file. |
+| After sign-in the URL is `index.php.php` (or similar) | A redirect target already ended in `.php` and had it appended again. Route every `?next=` value through `safe_page()` in `src/Bootstrap.php`, which rebuilds `name.php` from an allow-list. |
 | Blank page, no output | PHP error display is off. Check `php.ini` `display_errors`, or read `error_log`. |
 | "could not find driver" | Enable `extension=pdo_mysql` in `php.ini` and restart Apache. |
 | 404 on every page | Files are outside the web root, or `base_url()` doesn't match the folder name. |
