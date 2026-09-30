@@ -97,7 +97,7 @@ def first_literal(arg: str):
 
 
 def main() -> int:
-    errors, skips, scanned = [], [], 0
+    errors, extras, skips, scanned = [], [], [], 0
 
     for d in SRC_DIRS:
         base = ROOT / d
@@ -152,19 +152,33 @@ def main() -> int:
                 if missing:
                     errors.append((rel, line, method, missing, " ".join(sql.split())[:130]))
 
+                # The other HY093 direction: a bound key the statement never
+                # declares. PDO rejects the whole execute(), so a stray
+                # $params['mine'] left over from a sibling query is a 500.
+                unused = sorted(bound - expected)
+                if unused:
+                    extras.append((rel, line, method, unused, " ".join(sql.split())[:130]))
+
     print(f"scanned {scanned} PHP files")
     print(f"skipped {len(skips)} call(s) with non-literal param arrays")
 
-    if not errors:
-        print("OK - every named placeholder has a bound value")
-        return 0
+    if errors or extras:
+        if errors:
+            print(f"\n{len(errors)} unbound placeholder(s):\n")
+            for rel, line, method, missing, sql in errors:
+                print(f"  {rel}:{line}  Database::{method}")
+                print(f"      missing: {', '.join(':' + x for x in missing)}")
+                print(f"      sql: {sql}\n")
+        if extras:
+            print(f"{len(extras)} bound-but-undeclared placeholder(s):\n")
+            for rel, line, method, unused, sql in extras:
+                print(f"  {rel}:{line}  Database::{method}")
+                print(f"      not in sql: {', '.join(':' + x for x in unused)}")
+                print(f"      sql: {sql}\n")
+        return 1
 
-    print(f"\n{len(errors)} unbound placeholder(s):\n")
-    for rel, line, method, missing, sql in errors:
-        print(f"  {rel}:{line}  Database::{method}")
-        print(f"      missing: {', '.join(':' + x for x in missing)}")
-        print(f"      sql: {sql}\n")
-    return 1
+    print("OK - every named placeholder is bound, and every bound name is declared")
+    return 0
 
 
 if __name__ == "__main__":

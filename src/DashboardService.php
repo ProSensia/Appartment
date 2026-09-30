@@ -107,9 +107,9 @@ private static function netBalances(int $apartmentId): array
         $me = (int) Auth::id();
         return Database::all(
             "SELECT m.id, m.meal_type, m.menu_title, m.menu_notes, m.cook_user_id,
-                    m.status, p.locked,
+                    m.locked, p.status AS plan_status,
                     u.full_name AS cook_name,
-                    mp.status AS my_status, mp.is_cooking
+                    mp.status AS my_status, mp.responded_at
                FROM meals m
                JOIN meal_plans p   ON p.id = m.meal_plan_id
                LEFT JOIN users u   ON u.id = m.cook_user_id
@@ -126,17 +126,17 @@ private static function netBalances(int $apartmentId): array
     private static function mealCoverage(int $apartmentId, string $to): array
     {
         $rows = Database::all(
-            'SELECT m.day_of_week, m.meal_type,
-                    SUM(mp.status = "eating") AS eaters,
-                    SUM(mp.is_cooking = 1)    AS cooks,
-                    SUM(mp.status = "opting_out") AS opting_out
+            "SELECT m.day_of_week, m.meal_type,
+                    SUM(mp.status = 'eating') AS eaters,
+                    SUM(m.cook_user_id IS NOT NULL) AS cooks,
+                    SUM(mp.status = 'opting_out') AS opting_out
                FROM meals m
                JOIN meal_plans p ON p.id = m.meal_plan_id
                LEFT JOIN meal_participants mp ON mp.meal_id = m.id
-              WHERE p.apartment_id = :a AND p.week_start <= :to
-                AND p.week_start >= DATE_SUB(:to, INTERVAL 6 DAY)
-              GROUP BY m.day_of_week, m.meal_type',
-            ['a' => $apartmentId, 'to' => $to]
+              WHERE p.apartment_id = :a AND p.week_start <= :to1
+                AND p.week_start >= DATE_SUB(:to2, INTERVAL 6 DAY)
+              GROUP BY m.day_of_week, m.meal_type",
+            ['a' => $apartmentId, 'to1' => $to, 'to2' => $to]
         );
 
         $out = [];

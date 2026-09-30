@@ -71,7 +71,7 @@ views = OrderedDict()    # name -> body
 inserts = []             # (table, [cols], path)
 alters = []
 
-for path in ("sql/schema.sql", "sql/seed.sql"):
+for path in ("sql/schema.sql", "sql/seed.sql", "sql/patch.sql"):
     raw = read(path)
     stmts = split_statements(raw)
     print(f"{path}: {len(stmts)} statements")
@@ -191,4 +191,4 @@ if errors:
     for e in errors:
         print("  x " + e)
     sys.exit(1)
-print("\nOK  - schema.sql + seed.sql parse cleanly, FK/INSERT/view references resolve")
+print("\nOK  - schema.sql + seed.sql + patch.sql parse cleanly, FK/INSERT/view references resolve")

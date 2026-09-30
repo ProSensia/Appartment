@@ -228,7 +228,7 @@ final class MealService
     public static function setMenu(int $mealId, int $actorId, bool $isAdmin, ?string $title, ?string $notes = null): array
     {
         $meal = Database::one(
-            'SELECT m.*, p.apartment_id, p.locked AS plan_locked
+            'SELECT m.*, p.apartment_id, p.status AS plan_locked
                FROM meals m JOIN meal_plans p ON p.id = m.meal_plan_id
               WHERE m.id = :id',
             ['id' => $mealId]

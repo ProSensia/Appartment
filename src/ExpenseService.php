@@ -537,9 +537,8 @@ final class ExpenseService
     {
         [$where, $params] = self::filterClause($apartmentId, $filters);
 
-        // :mine is only used by the row query; harmless if bound here too.
-        $params['mine'] = (int) ($filters['viewer_id'] ?? 0);
-
+        // No :mine here -- PDO rejects parameters the statement never declares
+        // (SQLSTATE[HY093]), and the count query has no my_share subquery.
         return (int) Database::value(
             'SELECT COUNT(*)
                FROM expenses e

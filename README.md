@@ -115,6 +115,20 @@ mysql -u YOUR_USER -p YOUR_DB < sql/schema.sql
 mysql -u YOUR_USER -p YOUR_DB < sql/seed.sql
 ```
 
+**Updating an existing install: use the patch, not the schema.** `sql/schema.sql`
+begins by dropping every table, so re-importing it to pick up a fix deletes all
+residents, expenses, chores and history. `sql/patch.sql` is the safe counterpart —
+it only issues `CREATE OR REPLACE VIEW`, contains no `DROP`/`DELETE`/`TRUNCATE`
+(a check enforces that), and can be re-run as often as you like:
+
+```
+mysql -u YOUR_USER -p YOUR_DB < sql/patch.sql
+```
+
+It finishes with a verification query. If `balanced` reads `BROKEN` instead of
+`BALANCED`, the old view is still installed — check you selected the right
+database in step 0 of the file.
+
 If sign-in reports a wrong email *or* password for an address you know is
 seeded, the usual cause is an empty database: the import ran against a different
 schema than the app is reading.
@@ -156,8 +170,11 @@ the PHP syntax check uses `php -l` if PHP is installed, otherwise the optional
 They verify that the SQL parses and that every FK, INSERT column and view
 reference resolves; that no `INSERT` has a column/value count mismatch
 (MySQL `#1136`) and no query uses a construct MySQL rejects at runtime; that
-every PHP file both loads (BOM / misplaced `declare`) and compiles; that every
-named PDO placeholder is bound and none is duplicated; that cross-class
+every column named in a query actually exists in the schema
+(`SQLSTATE[42S22]`, error 1054) and that a joined `UNION ALL` cannot silently
+multiply rows; that every PHP file both loads (BOM / misplaced `declare`) and
+compiles; that every named PDO placeholder is bound, none is duplicated, and
+none is bound that the statement never declares (all `HY093`); that cross-class
 references resolve; that route handlers are wired sane; and that every
 front-end JS file parses.
 
@@ -209,7 +226,19 @@ bootstrap, so a page only downloads the controller it needs.
 - **One named placeholder per use.** Native prepared statements reject a
   repeated `:name`, so queries that need the same value twice use `:u1`/`:u2`.
   `tests/check_bindings.py` and `check_placeholders.py` enforce both halves of
-  this rule.
+  this rule — a repeated name *and* a bound name the SQL never declares, which
+  is the other `HY093`.
+- **Query columns are checked against the schema, not by eye.** `tests/check_sql_columns.py`
+  resolves every `alias.column` against `sql/schema.sql`. Three real bugs slipped
+  past review here (`meals.status`, `meal_plans.locked`, a `meal_participants.is_cooking`
+  column that never existed) and each blanked a page with error 1054. Note the
+  layout this forces: `meals.locked` and `meal_plans.status` are different things,
+  so a query about "is this week locked" must read the *plan*, not the slot.
+- **SQL string literals use `"` inside single-quoted PHP strings.** PHP does not
+  support `''` as an escaped quote the way SQL does — `php -l` rejects it — so a
+  query that needs `'eating'` is written as a double-quoted PHP string.
+  `Database::conn()` pins the session `sql_mode`, so `"..."` stays a string
+  literal even on a host that enables `ANSI_QUOTES`.
 - **Views pass three shapes deliberately.** `resident.roster` is bucketed
   (`{rooms, duty_groups, residents}`), `chore.mine` is grouped by urgency, and
   `meal.week` is `{plan, grid, stats}`. Controllers index into them directly; a
@@ -232,7 +261,10 @@ bootstrap, so a page only downloads the controller it needs.
 | `strict_types declaration must be the very first statement` | The file starts with a UTF-8 BOM (invisible in most editors). Re-save the file as UTF-8 **without BOM**; `tests/check_php_preamble.py` finds every affected file. |
 | After sign-in the URL is `index.php.php` (or similar) | A redirect target already ended in `.php` and had it appended again. Route every `?next=` value through `safe_page()` in `src/Bootstrap.php`, which rebuilds `name.php` from an allow-list. |
 | A red "Request failed (500)" toast on every page | The API returned a non-JSON 500, meaning a PHP fatal before the router's own error handling — almost always a parse error. Run `python tests\run_checks.py` (`check_php_syntax.py` names the file and line). The endpoint also now returns the real message as JSON instead of a blank 500. |
-| Dashboard/ledger returns 400 `balances must sum to 0` | `vw_balance_sheet` counted a user twice when they both sent and received a settlement. Recreate the view from `sql/schema.sql` (see the note under the view). Ensure your DB has the fixed definition. |
+| Dashboard/ledger returns 400 `balances must sum to 0` | `vw_balance_sheet` counted a user twice when they both sent and received a settlement. Run `sql/patch.sql` — it replaces the view in place, no data lost. |
+| `SQLSTATE[42S22]: Column not found: 1054 Unknown column 'x.y'` | A query names a column that doesn't exist. Run `python tests\run_checks.py`; `check_sql_columns.py` names the file, line and missing column. Note `meals.locked` and `meal_plans.status` are *different* columns, so "is the week locked" reads the plan. |
+| `SQLSTATE[HY093]: Invalid parameter number: parameter was not defined` | Either a `:name` used twice in one statement (use `:n1`/`:n2`), or a value bound that the SQL never declares — usually a leftover `$params['...']` from a sibling query. `check_placeholders.py` and `check_bindings.py` catch both. |
+| `Argument #1 ($inviteId) must be of type int, array given` | A row was passed to a function that expects an id. `array_map` over a query result hands each row as an array — decorate the row instead (see `decorateInviteRow()`). |
 | Blank page, no output | PHP error display is off. Check `php.ini` `display_errors`, or read `error_log`. |
 | "could not find driver" | Enable `extension=pdo_mysql` in `php.ini` and restart Apache. |
 | 404 on every page | Files are outside the web root, or `base_url()` doesn't match the folder name. |

@@ -23,6 +23,17 @@ if hasattr(sys.stdout, "reconfigure"):
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Statements that can lose rows. Comments are stripped before this runs, so
+# prose about DROP TABLE does not trip it.
+DESTRUCTIVE = re.compile(
+    r"\b(?:DROP\s+(?:TABLE|DATABASE)\b"
+    r"|TRUNCATE(?:\s+TABLE)?\b"
+    r"|DELETE\s+FROM\b"
+    r"|RENAME\s+TABLE\b"
+    r"|ALTER\s+TABLE\s+\w+`?\s+(?:DROP|TRUNCATE)\b)",
+    re.I,
+)
+
 
 def strip_comments(text):
     out, quote, i, n = [], None, 0, len(text)
@@ -135,8 +146,18 @@ for name in ("sql/schema.sql", "sql/seed.sql"):
         print(f"  {name}:{line_of(text, m.start())}  joined UNION ALL of "
               f"aggregates without an outer GROUP BY (may multiply rows)")
 
+    # (4) sql/patch.sql promises to be additive. Hold it to that: it exists so a
+    #     fix can be applied without re-importing schema.sql, which DROPs every
+    #     table. A destructive statement in it would defeat the entire point.
+    if name == "sql/patch.sql":
+        for m in re.finditer(DESTRUCTIVE, text, re.I):
+            findings += 1
+            print(f"  {name}:{line_of(text, m.start())}  destructive statement "
+                  f"({m.group(0).strip().upper()}) - patch.sql must never "
+                  f"delete data")
+
 if findings:
     print(f"\nFAIL - {findings} risky construct(s).")
     sys.exit(1)
 print("OK - no LIMIT/OFFSET subqueries, no INSERT..SELECT on its own target, "
-      "and no joined UNION ALL of aggregates.")
+      "no joined UNION ALL of aggregates, and patch.sql is additive only.")

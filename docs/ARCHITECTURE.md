@@ -269,9 +269,11 @@ which is why they exist: neither was available on the machine that built this.
 | `check_insert_arity.py` | MySQL `#1136` — an INSERT whose value count doesn't match its column count |
 | `check_insert_arity_test.py` | Self-test proving the arity checker still fails on a seeded bug |
 | `check_sql_restrictions.py` | Subquery `LIMIT`/`OFFSET` outer references; `INSERT .. SELECT` on its own target (error 1093); joined `UNION ALL` of aggregates that can multiply rows |
+| `check_sql_columns.py` | `SQLSTATE[42S22]` / error 1054 - an `alias.column` reference, or an `insert()`/`update()` payload key, that names a column the schema does not have |
+| `check_sql_columns_test.py` | Self-test proving the column checker still fails on the three seeded bugs |
 | `check_php_preamble.py` | A UTF-8 BOM or stray output before `declare(strict_types=1)` |
 | `check_php_syntax.py` | PHP that does not compile at all (`php -l`, or Node php-parser) |
-| `check_bindings.py` | PDO placeholders with no bound value |
+| `check_bindings.py` | PDO placeholders with no bound value, **and** bound names the statement never declares (both `HY093`) |
 | `check_placeholders.py` | A named placeholder used twice |
 | `check_references.py` | Calls to functions/classes that don't exist |
 | `check_routes.py` | Route handlers wired as arrays instead of callables |
@@ -303,6 +305,29 @@ whole dashboard came back as HTTP 400. Collapsing the union with an outer
 `GROUP BY` gives one row per user, which is why the view now wraps its union in a
 `SELECT ... SUM(...) ... GROUP BY uid`. The rule requires the `UNION ALL` to be at
 the top level of the joined subquery, so the wrapper form passes.
+
+`check_sql_columns.py` exists because a column typo in a query string is invisible
+everywhere except on the server. All three of these shipped and each one blanked a
+page with `SQLSTATE[42S22]: Column not found: 1054`:
+
+| Query claimed | Reality |
+|---|---|
+| `meals.status`, `meal_plans.locked` | The two were swapped. `meals` has no `status`; `meal_plans.status` is the plan state and `meal_plans` has no `locked` |
+| `meal_participants.is_cooking` | No such column was ever created. Cooking is tracked by `meals.cook_user_id`, so the aggregate was rewritten to count that |
+| `p.locked AS plan_locked` in `MealService::setMenu()` | Same swap, which broke saving a menu |
+
+It resolves each `alias.column` against the column list read out of
+`sql/schema.sql`. It only checks *qualified* references, because an unqualified
+column could come from any table in the query, and it skips aliases it cannot bind
+to exactly one table (derived-table output aliases) rather than guessing. It also
+validates the column keys of `Database::insert()`/`Database::update()` payloads.
+
+Two PHP facts that shaped those fixes: PHP has no comma operator, and `''` does
+**not** escape a quote inside a single-quoted PHP string the way it does in SQL.
+A query therefore has to be a double-quoted PHP string to contain `'eating'`, which
+is why the codebase writes SQL literals as `"..."` inside single-quoted PHP strings
+instead. `Database::conn()` also pins the session `sql_mode`, so those literals stay
+string literals even on a host that sets `ANSI_QUOTES`.
 
 `check_php_preamble.py` exists because a UTF-8 BOM is invisible in an editor but
 decodes to output, which makes `declare(strict_types=1)` fatal the instant the

@@ -247,9 +247,9 @@ final class ResidentService
         ActivityLog::record('resident.invite_revoked', 'invite', $inviteId);
     }
 
-    public static function invites(int $apartmentId): array
+public static function invites(int $apartmentId): array
     {
-        return array_map([self::class, 'inviteRow'], Database::all(
+        return array_map([self::class, 'decorateInviteRow'], Database::all(
             'SELECT i.*, r.code AS room_code, g.name AS duty_group_name, u.full_name AS inviter_name
                FROM invites i
                LEFT JOIN rooms r       ON r.id = i.room_id
@@ -313,13 +313,23 @@ final class ResidentService
               WHERE i.id = :id',
             ['id' => $inviteId]
         );
-        if ($row !== null) {
-            $row['is_expired'] = strtotime((string) $row['expires_at']) < time();
-            // The raw token is returned once, at invite() time only — it is
-            // never recoverable from storage (we keep just its SHA-256).
-            $row['accept_path'] = base_url('join.php?token=<invite-token>');
-        }
-        return $row ?? [];
+        return $row === null ? [] : self::decorateInviteRow($row);
+    }
+
+    /**
+     * Add the display-only fields every invite row carries.
+     *
+     * Takes an already-selected row rather than an id: invites() reads them all
+     * in one query, and handing that row straight to a function that expected an
+     * int was the TypeError behind the invite page failing.
+     */
+    private static function decorateInviteRow(array $row): array
+    {
+        $row['is_expired'] = strtotime((string) $row['expires_at']) < time();
+        // The raw token is returned once, at invite() time only — it is
+        // never recoverable from storage (we keep just its SHA-256).
+        $row['accept_path'] = base_url('join.php?token=<invite-token>');
+        return $row;
     }
 
     /* ================================================================== */
