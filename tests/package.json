@@ -1,0 +1,10 @@
+{
+  "name": "flatmate-static-checks",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Optional tooling for FlatMate's static checks. php-parser lets tests/check_php_syntax.js find PHP that does not compile when no PHP binary is installed.",
+  "license": "MIT",
+  "devDependencies": {
+    "php-parser": "^3.2.5"
+  }
+}

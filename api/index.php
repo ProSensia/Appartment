@@ -24,6 +24,54 @@ header('X-Frame-Options: SAMEORIGIN');
 header('Referrer-Policy: same-origin');
 
 /* -------------------------------------------------------------------------- */
+/*  Fatal-error guard                                                         */
+/* -------------------------------------------------------------------------- */
+/*
+ * Parse errors and other E_* fatals are NOT catchable, so without this the
+ * endpoint returns an HTML error page. The JS client cannot parse that, so it
+ * shows only "Request failed (500)" and the real cause is invisible. This turns
+ * any fatal into the same JSON envelope the client already understands, so the
+ * message reaches both the UI and the error log.
+ */
+register_shutdown_function(static function (): void {
+    $err = error_get_last();
+    if ($err === null || !in_array(
+        $err['type'],
+        [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR],
+        true
+    )) {
+        return;
+    }
+
+    $action = (string) ($_GET['action'] ?? $_POST['action'] ?? '?');
+    error_log(sprintf(
+        '[FlatMate][api][fatal] action=%s %s in %s:%d',
+        $action,
+        $err['message'],
+        $err['file'],
+        $err['line']
+    ));
+
+    if (headers_sent()) {
+        return;                     // too late to replace whatever leaked out
+    }
+
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    header('X-Content-Type-Options: nosniff');
+
+    $dev = config('app.env', 'local') !== 'production';
+    echo json_encode([
+        'ok'    => false,
+        'error' => [
+            'code'    => 'fatal_error',
+            'message' => $dev ? $err['message'] : 'A fatal server error occurred.',
+            'details' => $dev ? ['action' => $action, 'file' => $err['file'], 'line' => $err['line']] : [],
+        ],
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+});
+
+/* -------------------------------------------------------------------------- */
 /*  Route table                                                               */
 /* -------------------------------------------------------------------------- */
 $ROUTES = [
@@ -52,7 +100,10 @@ $ROUTES = [
         ['email', 'password']],
     'auth.magic_request'=> ['POST', 'public', fn(array $i) => Auth::issueMagicLink((string) $i['email'])],
     'auth.magic_redeem' => ['POST', 'public', fn(array $i) => Auth::redeemMagicLink((string) $i['token'])],
-    'auth.logout'       => ['POST', 'auth',   fn() => (Auth::logout(), ['ok' => true])[1]],
+    'auth.logout'       => ['POST', 'auth',   function (): array {
+        Auth::logout();
+        return ['ok' => true];
+    }],
     'auth.me'           => ['GET',  'auth',   fn() => Auth::user()],
     'auth.csrf'         => ['GET',  'auth',   fn() => ['token' => csrf_token()]],
 
@@ -78,8 +129,7 @@ $ROUTES = [
         Auth::apartmentId(), isset($i['days']) ? (int) $i['days'] : null,
         isset($i['area_id']) ? (int) $i['area_id'] : null)],
     'chore.complete'    => ['POST', 'auth',   fn(array $i) => DutyScheduler::complete(
-        (int) $i['task_id'], (int) Auth::id(), Auth::isAdmin(), $i['note'] ?? null, $i['proof'] ?? null)],
-        ['task_id']],
+        (int) $i['task_id'], (int) Auth::id(), Auth::isAdmin(), $i['note'] ?? null, $i['proof'] ?? null), ['task_id']],
     'chore.verify'      => ['POST', 'admin',  fn(array $i) => DutyScheduler::verify(
         (int) $i['task_id'], (int) Auth::id(), $i['note'] ?? null), ['task_id']],
     'chore.skip'        => ['POST', 'auth',   fn(array $i) => DutyScheduler::skip(
@@ -134,8 +184,10 @@ $ROUTES = [
     'expense.find'      => ['GET',  'auth',   fn(array $i) => ExpenseService::find((int) $i['id']), ['id']],
     'expense.create'    => ['POST', 'auth',   fn(array $i) => ExpenseService::create(
         Auth::apartmentId(), (int) Auth::id(), $i), ['title', 'amount', 'paid_by_user_id']],
-    'expense.delete'    => ['POST', 'auth',   fn(array $i) => (ExpenseService::delete((int) $i['id'], (int) Auth::id()),
-                                                             ['deleted' => true])[1], ['id']],
+    'expense.delete'    => ['POST', 'auth',   function (array $i): array {
+        ExpenseService::delete((int) $i['id'], (int) Auth::id());
+        return ['deleted' => true];
+    }, ['id']],
     'expense.dispute'   => ['POST', 'auth',   fn(array $i) => ExpenseService::flagDispute(
         (int) $i['id'], (int) Auth::id(), $i['note'] ?? null, Auth::isAdmin()), ['id']],
     'expense.categories'=> ['GET',  'auth',   fn() => ExpenseService::categories(Auth::apartmentId())],
@@ -168,8 +220,10 @@ $ROUTES = [
     'resident.invite'   => ['POST', 'admin',  fn(array $i) => ResidentService::invite(
         Auth::apartmentId(), (int) Auth::id(), $i), ['email']],
     'resident.invites'  => ['GET',  'admin',  fn() => ResidentService::invites(Auth::apartmentId())],
-    'resident.revoke'   => ['POST', 'admin',  fn(array $i) => (ResidentService::revokeInvite(
-        Auth::apartmentId(), (int) $i['id']), ['revoked' => true])[1], ['id']],
+    'resident.revoke'   => ['POST', 'admin',  function (array $i): array {
+        ResidentService::revokeInvite(Auth::apartmentId(), (int) $i['id']);
+        return ['revoked' => true];
+    }, ['id']],
     'resident.accept'   => ['POST', 'public', fn(array $i) => ResidentService::acceptInvite(
         (string) $i['token'], (string) $i['password'], (string) $i['full_name']),
         ['token', 'password', 'full_name']],
@@ -179,9 +233,10 @@ $ROUTES = [
         Auth::apartmentId(), (int) $i['user_id'], (int) Auth::id()), ['user_id']],
     'resident.offboard_view'  => ['GET', 'auth', fn(array $i) => ResidentService::offboarding(
         Auth::apartmentId(), (int) ($i['user_id'] ?? Auth::id()))],
-    'resident.checklist_toggle' => ['POST', 'admin', fn(array $i) => (
-        ResidentService::toggleChecklistItem(Auth::apartmentId(), (int) $i['id'], !empty($i['done'])),
-        ['ok' => true])[1], ['id']],
+    'resident.checklist_toggle' => ['POST', 'admin', function (array $i): array {
+        ResidentService::toggleChecklistItem(Auth::apartmentId(), (int) $i['id'], !empty($i['done']));
+        return ['ok' => true];
+    }, ['id']],
     'resident.reinstate'=> ['POST', 'admin',  fn(array $i) => ResidentService::reinstate(
         Auth::apartmentId(), (int) $i['user_id'],
         isset($i['room_id']) ? (int) $i['room_id'] : null,
@@ -196,10 +251,14 @@ $ROUTES = [
         Auth::apartmentId(), (int) Auth::id(), $i), ['title']],
     'notice.pin'        => ['POST', 'admin',  fn(array $i) => NoticeBoard::pin(
         Auth::apartmentId(), (int) $i['id'], !empty($i['pinned']), $i['until'] ?? null), ['id']],
-    'notice.delete'     => ['POST', 'auth',   fn(array $i) => (NoticeBoard::remove(
-        Auth::apartmentId(), (int) $i['id'], (int) Auth::id()), ['deleted' => true])[1], ['id']],
-    'notice.read'       => ['POST', 'auth',   fn(array $i) => (NoticeBoard::markRead(
-        Auth::apartmentId(), (int) $i['id'], (int) Auth::id()), ['ok' => true])[1], ['id']],
+    'notice.delete'     => ['POST', 'auth',   function (array $i): array {
+        NoticeBoard::remove(Auth::apartmentId(), (int) $i['id'], (int) Auth::id());
+        return ['deleted' => true];
+    }, ['id']],
+    'notice.read'       => ['POST', 'auth',   function (array $i): array {
+        NoticeBoard::markRead(Auth::apartmentId(), (int) $i['id'], (int) Auth::id());
+        return ['ok' => true];
+    }, ['id']],
     'notice.read_all'   => ['POST', 'auth',   fn() => ['marked' => NoticeBoard::markAllRead(
         Auth::apartmentId(), (int) Auth::id())]],
 

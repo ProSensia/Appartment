@@ -148,13 +148,18 @@ change to those three classes; a failure names the exact check that broke.
 python tests/run_checks.py
 ```
 
+Two of them are more useful with extra tools, and skip cleanly without them:
+the PHP syntax check uses `php -l` if PHP is installed, otherwise the optional
+`php-parser` devDependency (`npm install` inside `tests/`); the JS check uses
+`node --check`.
+
 They verify that the SQL parses and that every FK, INSERT column and view
 reference resolves; that no `INSERT` has a column/value count mismatch
-(MySQL `#1136`) and no query uses a construct MySQL rejects at runtime; that no
-PHP file would fatal on load (BOM / misplaced `declare`); that every named PDO
-placeholder is bound and none is duplicated; that cross-class references
-resolve; that route handlers are wired sane; and that every front-end JS file
-parses.
+(MySQL `#1136`) and no query uses a construct MySQL rejects at runtime; that
+every PHP file both loads (BOM / misplaced `declare`) and compiles; that every
+named PDO placeholder is bound and none is duplicated; that cross-class
+references resolve; that route handlers are wired sane; and that every
+front-end JS file parses.
 
 ---
 
@@ -226,6 +231,7 @@ bootstrap, so a page only downloads the controller it needs.
 | `#1136 Column count doesn't match value count` | An `INSERT` lists more columns than values. `tests/check_insert_arity.py` catches this statically; run `python tests\run_checks.py`. |
 | `strict_types declaration must be the very first statement` | The file starts with a UTF-8 BOM (invisible in most editors). Re-save the file as UTF-8 **without BOM**; `tests/check_php_preamble.py` finds every affected file. |
 | After sign-in the URL is `index.php.php` (or similar) | A redirect target already ended in `.php` and had it appended again. Route every `?next=` value through `safe_page()` in `src/Bootstrap.php`, which rebuilds `name.php` from an allow-list. |
+| A red "Request failed (500)" toast on every page | The API returned a non-JSON 500, meaning a PHP fatal before the router's own error handling — almost always a parse error. Run `python tests\run_checks.py` (`check_php_syntax.py` names the file and line). The endpoint also now returns the real message as JSON instead of a blank 500. |
 | Blank page, no output | PHP error display is off. Check `php.ini` `display_errors`, or read `error_log`. |
 | "could not find driver" | Enable `extension=pdo_mysql` in `php.ini` and restart Apache. |
 | 404 on every page | Files are outside the web root, or `base_url()` doesn't match the folder name. |

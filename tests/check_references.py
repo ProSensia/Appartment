@@ -47,6 +47,7 @@ setcookie header http_response_code
 ob_start ob_get_clean ob_get_length
 error_log trigger_error error_reporting ini_set set_error_handler
 restore_error_handler set_exception_handler register_shutdown_function
+error_get_last headers_sent
 spl_autoload_register
 htmlspecialchars htmlentities strip_tags nl2br
 mb_substr mb_strlen mb_strimwidth mb_strtolower mb_strtoupper mb_convert_encoding

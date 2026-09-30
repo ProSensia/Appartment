@@ -270,6 +270,7 @@ which is why they exist: neither was available on the machine that built this.
 | `check_insert_arity_test.py` | Self-test proving the arity checker still fails on a seeded bug |
 | `check_sql_restrictions.py` | Subquery `LIMIT`/`OFFSET` outer references; `INSERT .. SELECT` on its own target (error 1093) |
 | `check_php_preamble.py` | A UTF-8 BOM or stray output before `declare(strict_types=1)` |
+| `check_php_syntax.py` | PHP that does not compile at all (`php -l`, or Node php-parser) |
 | `check_bindings.py` | PDO placeholders with no bound value |
 | `check_placeholders.py` | A named placeholder used twice |
 | `check_references.py` | Calls to functions/classes that don't exist |
@@ -304,6 +305,16 @@ Fatal error: strict_types declaration must be the very first statement
 
 Only files that actually declare `strict_types` are checked — `includes/foot.php`
 is an HTML partial with no PHP opening tag and must not trip it.
+
+`check_php_syntax.py` catches PHP that does not compile at all. The bug that
+motivated it was six routes in `api/index.php` written as
+`(Auth::logout(), ['ok' => true])[1]`. PHP has no comma operator, so the file
+never compiled: the router itself was a parse error, so every API request
+returned an HTML 500 before its own try/catch could run, and the client could
+only show "Request failed (500)". No text-based check could see it because the
+file never executed. It prefers the authoritative `php -l`; without a PHP binary
+it uses the optional `php-parser` devDependency (`npm install` inside `tests/`),
+and skips cleanly if neither is present.
 
 **2. Algorithm self-test** (`src/SelfTest.php`) — runs in PHP against known
 inputs, no fixtures:
