@@ -1,4 +1,4 @@
-﻿"""
+"""
 Static reference checker for the FlatMate PHP sources.
 
 There is no PHP binary in this environment, so this stands in for the "does it

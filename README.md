@@ -149,9 +149,12 @@ python tests/run_checks.py
 ```
 
 They verify that the SQL parses and that every FK, INSERT column and view
-reference resolves; that every named PDO placeholder is bound and none is
-duplicated; that cross-class references resolve; that route handlers are wired
-sane; and that every front-end JS file parses.
+reference resolves; that no `INSERT` has a column/value count mismatch
+(MySQL `#1136`) and no query uses a construct MySQL rejects at runtime; that no
+PHP file would fatal on load (BOM / misplaced `declare`); that every named PDO
+placeholder is bound and none is duplicated; that cross-class references
+resolve; that route handlers are wired sane; and that every front-end JS file
+parses.
 
 ---
 
@@ -221,6 +224,7 @@ bootstrap, so a page only downloads the controller it needs.
 | "Access denied for user 'root'@'localhost'" | `db.password` in `config/config.php` doesn't match your MySQL. XAMPP's default is empty. |
 | Import "succeeds" but every page is empty / errors on a missing table | The client wasn't pointed at a database. Both SQL files have `CREATE DATABASE`/`USE` commented out — pass the name on the CLI or select it in phpMyAdmin first. |
 | `#1136 Column count doesn't match value count` | An `INSERT` lists more columns than values. `tests/check_insert_arity.py` catches this statically; run `python tests\run_checks.py`. |
+| `strict_types declaration must be the very first statement` | The file starts with a UTF-8 BOM (invisible in most editors). Re-save the file as UTF-8 **without BOM**; `tests/check_php_preamble.py` finds every affected file. |
 | Blank page, no output | PHP error display is off. Check `php.ini` `display_errors`, or read `error_log`. |
 | "could not find driver" | Enable `extension=pdo_mysql` in `php.ini` and restart Apache. |
 | 404 on every page | Files are outside the web root, or `base_url()` doesn't match the folder name. |

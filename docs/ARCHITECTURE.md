@@ -268,6 +268,8 @@ which is why they exist: neither was available on the machine that built this.
 | `validate_sql.py` | SQL that won't parse; dangling FK/INSERT/view references |
 | `check_insert_arity.py` | MySQL `#1136` — an INSERT whose value count doesn't match its column count |
 | `check_insert_arity_test.py` | Self-test proving the arity checker still fails on a seeded bug |
+| `check_sql_restrictions.py` | Subquery `LIMIT`/`OFFSET` outer references; `INSERT .. SELECT` on its own target (error 1093) |
+| `check_php_preamble.py` | A UTF-8 BOM or stray output before `declare(strict_types=1)` |
 | `check_bindings.py` | PDO placeholders with no bound value |
 | `check_placeholders.py` | A named placeholder used twice |
 | `check_references.py` | Calls to functions/classes that don't exist |
@@ -285,6 +287,23 @@ comment and paren state, and stops each statement at its terminating semicolon.
 The self-test re-introduces the real historical bug (a stray `id` column) into a
 throwaway copy of `sql/` and asserts the checker rejects it — otherwise a
 checker that silently matches nothing would pass forever.
+
+`check_sql_restrictions.py` covers the other half of that problem: constructs
+that parse but that MySQL refuses, so they only surface on the server. It strips
+comments first so prose describing a bad pattern does not trip it.
+
+`check_php_preamble.py` exists because a UTF-8 BOM is invisible in an editor but
+decodes to output, which makes `declare(strict_types=1)` fatal the instant the
+file loads. Re-uploading files through a Windows tool introduced one on four
+files at once (`src/Database.php`, `src/ActivityLog.php`, `src/NoticeBoard.php`,
+`expenses.php`) and blanked every page with:
+
+```
+Fatal error: strict_types declaration must be the very first statement
+```
+
+Only files that actually declare `strict_types` are checked — `includes/foot.php`
+is an HTML partial with no PHP opening tag and must not trip it.
 
 **2. Algorithm self-test** (`src/SelfTest.php`) — runs in PHP against known
 inputs, no fixtures:

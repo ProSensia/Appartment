@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Expenses — the shared ledger, plus the settle-up view.
  *
