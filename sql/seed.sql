@@ -23,6 +23,12 @@
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
+
+-- Select the database before running, or uncomment and set it to match
+-- config/config.php. Leaving this out is why an import can succeed with
+-- "0 rows affected" and leave the app querying an empty schema.
+-- USE `flatmate_db`;
+
 SET @ws := DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY);  -- Monday 00:00 of this week
 
 -- ===========================================================================

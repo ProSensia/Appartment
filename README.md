@@ -84,6 +84,20 @@ chore areas, meals and expenses.
 Sign in as **Aisha** to see the admin-only affordances (invites, rooms and duty
 groups, resident status changes, offboarding, chore area editing).
 
+**The database name must match.** `config/config.php` sets `app.database`, and
+that has to be the same database you imported into. Both SQL files have their
+`CREATE DATABASE` / `USE` lines commented out, so nothing overrides your
+selection — select your database in phpMyAdmin first, or pass it on the CLI:
+
+```
+mysql -u YOUR_USER -p YOUR_DB < sql/schema.sql
+mysql -u YOUR_USER -p YOUR_DB < sql/seed.sql
+```
+
+If sign-in reports a wrong email *or* password for an address you know is
+seeded, the usual cause is an empty database: the import ran against a different
+schema than the app is reading.
+
 > Delete these accounts, or the whole `flatmate` database, before using this for
 > anything real.
 

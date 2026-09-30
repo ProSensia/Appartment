@@ -126,7 +126,7 @@ final class Auth
     /**
      * @return array{ok:bool, user?:array, error?:string}
      */
-    public static function attempt(string $email, string $password): array
+    public static function attempt(string $email, string $password, bool $remember = false): array
     {
         $row = Database::one(
             'SELECT * FROM users WHERE email = :email LIMIT 1',
@@ -155,7 +155,7 @@ final class Auth
             Database::update('users', ['password_hash' => self::hash($password)], 'id', (int) $row['id']);
         }
 
-        self::login($row);
+        self::login($row, $remember);
         return ['ok' => true, 'user' => $row];
     }
 

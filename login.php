@@ -20,9 +20,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $email = trim((string) ($_POST['email'] ?? ''));
     try {
-        Auth::attempt($email, (string) ($_POST['password'] ?? ''), !empty($_POST['remember']));
-        flash('success', 'Welcome back!');
-        redirect(preg_match('/^[\w\-.]+$/', $redirect) === 1 ? $redirect . '.php' : 'index.php');
+        // attempt() reports failure in its return value, not by throwing, so
+        // the result has to be checked or a bad password looks like success.
+        $result = Auth::attempt(
+            $email,
+            (string) ($_POST['password'] ?? ''),
+            !empty($_POST['remember'])
+        );
+        if (empty($result['ok'])) {
+            $error = (string) ($result['error'] ?? 'Sign-in failed. Please try again.');
+        } else {
+            flash('success', 'Welcome back!');
+            redirect(preg_match('/^[\w\-.]+$/', $redirect) === 1 ? $redirect . '.php' : 'index.php');
+        }
     } catch (RuntimeException $e) {
         $error = $e->getMessage();
     }

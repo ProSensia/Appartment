@@ -16,11 +16,24 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 SET SQL_MODE = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION';
 
-CREATE DATABASE IF NOT EXISTS `flatmate_db`
-  DEFAULT CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
+-- ---------------------------------------------------------------------------
+--  DATABASE SELECTION
+-- ---------------------------------------------------------------------------
+--  The name below must match 'database' in config/config.php.
+--  For an existing database you do not own the name of (e.g. shared hosting),
+--  comment out BOTH lines and instead select your database before importing:
+--      phpMyAdmin: tick the database in the left sidebar, then Import
+--      CLI       : mysql -u USER -p YOUR_DB < sql/schema.sql
+--
+--  1. CREATE DATABASE ...   skip when the DB already exists / is managed
+--  2. USE `...`             sets the default for every statement below
+-- ---------------------------------------------------------------------------
 
-USE `flatmate_db`;
+-- CREATE DATABASE IF NOT EXISTS `flatmate_db`
+--   DEFAULT CHARACTER SET utf8mb4
+--   COLLATE utf8mb4_unicode_ci;
+
+-- USE `flatmate_db`;
 
 DROP VIEW  IF EXISTS `vw_balance_sheet`;
 DROP VIEW  IF EXISTS `vw_today_chores`;
