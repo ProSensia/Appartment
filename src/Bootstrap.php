@@ -1,0 +1,272 @@
+<?php
+/**
+ * ---------------------------------------------------------------------------
+ * FlatMate  |  Application bootstrap
+ * ---------------------------------------------------------------------------
+ * One require from any entry point:
+ *     require_once __DIR__ . '/src/Bootstrap.php';
+ *
+ * Gives you: the PSR-0 style autoloader, config(), the shared PDO handle,
+ * session start, error handling, CSRF helpers and small view helpers.
+ */
+
+declare(strict_types=1);
+
+define('FLATMATE_ROOT', dirname(__DIR__));
+define('FLATMATE_VERSION', '1.0.0');
+
+/* -------------------------------------------------------------------------- */
+/*  Autoloader — src/BalanceEngine.php  ->  class BalanceEngine                 */
+/* -------------------------------------------------------------------------- */
+spl_autoload_register(static function (string $class): void {
+    if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $class)) {
+        return;
+    }
+    $file = __DIR__ . '/' . $class . '.php';
+    if (is_file($file)) {
+        require_once $file;
+    }
+});
+
+/* -------------------------------------------------------------------------- */
+/*  Configuration                                                              */
+/* -------------------------------------------------------------------------- */
+if (!function_exists('config')) {
+    function config(?string $key = null, mixed $default = null): mixed
+    {
+        static $cfg = null;
+        if ($cfg === null) {
+            $cfg = require FLATMATE_ROOT . '/config/config.php';
+        }
+        if ($key === null) {
+            return $cfg;
+        }
+        // dotted lookup: config('app.currency')
+        $value = $cfg;
+        foreach (explode('.', $key) as $segment) {
+            if (!is_array($value) || !array_key_exists($segment, $value)) {
+                return $default;
+            }
+            $value = $value[$segment];
+        }
+        return $value;
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Database handle                                                            */
+/* -------------------------------------------------------------------------- */
+if (!function_exists('db')) {
+    function db(): PDO
+    {
+        return Database::conn();
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Error handling                                                             */
+/* -------------------------------------------------------------------------- */
+if (!function_exists('app_error_handler')) {
+    function app_error_handler(int $severity, string $message, string $file = '', int $line = 0): bool
+    {
+        if (!(error_reporting() & $severity)) {
+            return false;
+        }
+        throw new ErrorException($message, 0, $severity, $file, $line);
+    }
+}
+
+error_reporting(E_ALL);
+ini_set('display_errors', config('app.env', 'local') === 'production' ? '0' : '1');
+ini_set('log_errors', '1');
+set_error_handler('app_error_handler');
+
+/* -------------------------------------------------------------------------- */
+/*  Timezone + session                                                         */
+/* -------------------------------------------------------------------------- */
+date_default_timezone_set((string) config('app.timezone', 'UTC'));
+
+if (PHP_SAPI !== 'cli' && session_status() !== PHP_SESSION_ACTIVE) {
+    session_name((string) config('app.session_name', 'FLATMATE_SESSID'));
+    session_set_cookie_params([
+        'lifetime' => (int) config('app.session_life', 1209600),
+        'path'     => '/',
+        'httponly' => true,
+        'samesite' => 'Lax',
+        'secure'   => (($_SERVER['HTTPS'] ?? '') === 'on'),
+    ]);
+    session_start();
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Small view helpers                                                         */
+/* -------------------------------------------------------------------------- */
+if (!function_exists('e')) {
+    /** HTML-escape. Use for every dynamic value printed into HTML. */
+    function e(mixed $value): string
+    {
+        return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+}
+
+if (!function_exists('base_url')) {
+    function base_url(string $path = ''): string
+    {
+        return rtrim((string) config('app.base_url', ''), '/') . '/' . ltrim($path, '/');
+    }
+}
+
+if (!function_exists('money')) {
+    /** Format a decimal/cents value as "৳1,234.50". */
+    function money(float|int|string $amount, bool $withSymbol = true): string
+    {
+        $n = number_format((float) $amount, 2);
+        return $withSymbol
+            ? config('app.currency', '৳') . $n
+            : $n;
+    }
+}
+
+if (!function_exists('initials')) {
+    /** "Aisha Rahman" -> "AR". Used for avatars. */
+    function initials(?string $name): string
+    {
+        $parts = preg_split('/\s+/', trim((string) $name)) ?: [];
+        $out   = '';
+        foreach (array_slice($parts, 0, 2) as $p) {
+            $out .= mb_strtoupper(mb_substr($p, 0, 1));
+        }
+        return $out === '' ? '?' : $out;
+    }
+}
+
+if (!function_exists('ago')) {
+    /** Relative time for activity feeds: "3h ago". */
+    function ago(?string $datetime): string
+    {
+        if (!$datetime) {
+            return '';
+        }
+        // Stored as UTC.
+        $ts   = strtotime($datetime . ' UTC');
+        if ($ts === false) {
+            return '';
+        }
+        $diff = time() - $ts;
+        foreach ([[31536000, 'y'], [2592000, 'mo'], [604800, 'w'], [86400, 'd'], [3600, 'h'], [60, 'm']] as [$secs, $unit]) {
+            if ($diff >= $secs) {
+                return intdiv($diff, $secs) . $unit . ' ago';
+            }
+        }
+        return 'just now';
+    }
+}
+
+if (!function_exists('asset')) {
+    function asset(string $path): string
+    {
+        $rel  = '/assets/' . ltrim($path, '/');
+        $file = FLATMATE_ROOT . '/' . ltrim($rel, '/');
+        $v    = is_file($file) ? (string) filemtime($file) : FLATMATE_VERSION;
+        return base_url($rel) . '?v=' . $v;
+    }
+}
+
+if (!function_exists('redirect')) {
+    function redirect(string $path): never
+    {
+        $target = str_starts_with($path, 'http') ? $path : base_url($path);
+        header('Location: ' . $target);
+        exit;
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Flash messages                                                             */
+/* -------------------------------------------------------------------------- */
+if (!function_exists('flash')) {
+    function flash(string $type, string $message): void
+    {
+        $_SESSION['_flash'][] = ['type' => $type, 'message' => $message];
+    }
+}
+
+if (!function_exists('take_flashes')) {
+    function take_flashes(): array
+    {
+        $out = $_SESSION['_flash'] ?? [];
+        unset($_SESSION['_flash']);
+        return $out;
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  CSRF                                                                      */
+/* -------------------------------------------------------------------------- */
+if (!function_exists('csrf_token')) {
+    function csrf_token(): string
+    {
+        if (empty($_SESSION['_csrf'])) {
+            $_SESSION['_csrf'] = bin2hex(random_bytes(32));
+        }
+        return $_SESSION['_csrf'];
+    }
+}
+
+if (!function_exists('csrf_field')) {
+    function csrf_field(): string
+    {
+        return '<input type="hidden" name="_csrf" value="' . e(csrf_token()) . '">';
+    }
+}
+
+if (!function_exists('csrf_valid')) {
+    function csrf_valid(?string $token): bool
+    {
+        return is_string($token)
+            && !empty($_SESSION['_csrf'])
+            && hash_equals($_SESSION['_csrf'], $token);
+    }
+}
+
+if (!function_exists('require_csrf')) {
+    /** Abort the request unless a valid CSRF token was supplied. */
+    function require_csrf(): void
+    {
+        $token = $_POST['_csrf']
+            ?? $_SERVER['HTTP_X_CSRF_TOKEN']
+            ?? (json_decode(file_get_contents('php://input') ?: '{}', true)['_csrf'] ?? null);
+
+        if (!csrf_valid(is_string($token) ? $token : null)) {
+            if (str_starts_with((string) ($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json')) {
+                Response::error('CSRF token missing or expired. Reload the page.', 419);
+            }
+            http_response_code(419);
+            exit('CSRF token missing or expired. Reload the page and try again.');
+        }
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Guard helpers for pages                                                    */
+/* -------------------------------------------------------------------------- */
+if (!function_exists('require_login')) {
+    function require_login(): void
+    {
+        if (!Auth::check()) {
+            flash('warning', 'Please sign in to continue.');
+            redirect('login.php');
+        }
+    }
+}
+
+if (!function_exists('require_admin')) {
+    function require_admin(): void
+    {
+        require_login();
+        if (!Auth::isAdmin()) {
+            flash('danger', 'That area is restricted to the apartment admin.');
+            redirect('dashboard.php');
+        }
+    }
+}
