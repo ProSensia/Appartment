@@ -719,14 +719,22 @@ LEFT JOIN (
   GROUP BY `user_id`
 ) s ON s.`uid` = u.`id`
 LEFT JOIN (
-  SELECT
-    `from_user_id` AS uid,
-    SUM(`amount`)  AS total_sent,
-    0             AS total_received
-  FROM `settlements` GROUP BY `from_user_id`
-  UNION ALL
-  SELECT `to_user_id`, 0, SUM(`amount`)
-  FROM `settlements` GROUP BY `to_user_id`
+  -- A user can both send and receive settlements, which the UNION ALL below
+  -- reports as two rows. They must be collapsed before joining, otherwise the
+  -- join multiplies the user's paid/owed totals AND one settlement amount is
+  -- silently overwritten when results are keyed by user_id -- the net balances
+  -- stop summing to zero and DebtSimplifier rejects the ledger (HTTP 400).
+  SELECT uid,
+         SUM(total_sent)     AS total_sent,
+         SUM(total_received) AS total_received
+  FROM (
+    SELECT `from_user_id` AS uid, SUM(`amount`) AS total_sent, 0 AS total_received
+    FROM `settlements` GROUP BY `from_user_id`
+    UNION ALL
+    SELECT `to_user_id`, 0, SUM(`amount`)
+    FROM `settlements` GROUP BY `to_user_id`
+  ) settled
+  GROUP BY uid
 ) t ON t.`uid` = u.`id`
 WHERE u.`status` IN ('active', 'invited');
 

@@ -268,7 +268,7 @@ which is why they exist: neither was available on the machine that built this.
 | `validate_sql.py` | SQL that won't parse; dangling FK/INSERT/view references |
 | `check_insert_arity.py` | MySQL `#1136` — an INSERT whose value count doesn't match its column count |
 | `check_insert_arity_test.py` | Self-test proving the arity checker still fails on a seeded bug |
-| `check_sql_restrictions.py` | Subquery `LIMIT`/`OFFSET` outer references; `INSERT .. SELECT` on its own target (error 1093) |
+| `check_sql_restrictions.py` | Subquery `LIMIT`/`OFFSET` outer references; `INSERT .. SELECT` on its own target (error 1093); joined `UNION ALL` of aggregates that can multiply rows |
 | `check_php_preamble.py` | A UTF-8 BOM or stray output before `declare(strict_types=1)` |
 | `check_php_syntax.py` | PHP that does not compile at all (`php -l`, or Node php-parser) |
 | `check_bindings.py` | PDO placeholders with no bound value |
@@ -291,7 +291,18 @@ checker that silently matches nothing would pass forever.
 
 `check_sql_restrictions.py` covers the other half of that problem: constructs
 that parse but that MySQL refuses, so they only surface on the server. It strips
-comments first so prose describing a bad pattern does not trip it.
+comments first so prose describing a bad pattern does not trip it. It also flags a
+*silent* variant rather than a server error: a joined derived table whose body is a
+top-level `UNION ALL` of aggregates. `vw_balance_sheet` grouped settlements by sender
+and by receiver and joined the two branches directly, so a user who both paid and
+received got two output rows. The join then multiplied their paid/owed totals and
+keying results by `user_id` silently dropped the smaller row, leaving the net
+balances off by whatever the lost settlement was (700 BDT with the seeded data).
+`DebtSimplifier::simplify()` rejects any ledger that does not sum to zero, so the
+whole dashboard came back as HTTP 400. Collapsing the union with an outer
+`GROUP BY` gives one row per user, which is why the view now wraps its union in a
+`SELECT ... SUM(...) ... GROUP BY uid`. The rule requires the `UNION ALL` to be at
+the top level of the joined subquery, so the wrapper form passes.
 
 `check_php_preamble.py` exists because a UTF-8 BOM is invisible in an editor but
 decodes to output, which makes `declare(strict_types=1)` fatal the instant the

@@ -16,7 +16,7 @@ CHECKS = [
     ("SQL schema/seed parses, FKs + views + insert columns resolve", ".validate_sql.py"),
     ("INSERT column/value arity (MySQL error 1136)", "tests/check_insert_arity.py"),
     ("INSERT arity checker self-test", "tests/check_insert_arity_test.py"),
-    ("MySQL-only restrictions (subquery LIMIT, error 1093)", "tests/check_sql_restrictions.py"),
+    ("MySQL-only restrictions (subquery LIMIT, error 1093, joined UNION ALL)", "tests/check_sql_restrictions.py"),
     ("PHP preamble (strict_types / UTF-8 BOM)", "tests/check_php_preamble.py"),
     ("PHP compiles (php -l, or Node php-parser)", "tests/check_php_syntax.py"),
     ("PDO placeholder bindings (no unbound :names)", "tests/check_bindings.py"),

@@ -1,4 +1,4 @@
-"""Catch two MySQL restrictions that a plain parse happily accepts.
+"""Catch three MySQL restrictions that a plain parse happily accepts.
 
 1. A subquery whose LIMIT/OFFSET refers to a column of the enclosing query.
    MySQL cannot resolve outer references in a subquery's LIMIT/OFFSET, so this
@@ -6,6 +6,11 @@
    had to be rewritten as a numbered rotation pool.
 2. INSERT INTO t ... SELECT ... FROM t, which MySQL rejects with error 1093
    ("You can't specify target table for update in FROM clause").
+3. A joined derived table whose body is a top-level UNION ALL of aggregates. If
+   a user can appear in more than one branch, the join multiplies their totals
+   and results keyed by user id silently drop rows, so the ledger stops summing
+   to zero. vw_balance_sheet did this with settlements and broke every balance
+   read (HTTP 400 from DebtSimplifier). Collapse the union with an outer GROUP BY.
 
 Comments are stripped first, so prose describing a bad pattern does not trip it.
 """
@@ -52,6 +57,35 @@ def strip_comments(text):
     return "".join(out)
 
 
+def matching_paren(text, open_idx):
+    """Index of the ')' matching the '(' at open_idx, or -1."""
+    depth = 0
+    for i in range(open_idx, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def has_top_level_union_all(body):
+    """True if a UNION ALL sits at depth 0 of body (its top-level query)."""
+    depth = 0
+    i, n = 0, len(body)
+    while i < n:
+        c = body[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif depth == 0 and body[i:i + 9].upper() == "UNION ALL":
+            return True
+        i += 1
+    return False
+
+
 def line_of(text, index):
     return text[:index].count("\n") + 1
 
@@ -84,7 +118,25 @@ for name in ("sql/schema.sql", "sql/seed.sql"):
             print(f"  {name}:{line_of(text, m.start())}  INSERT INTO {table} "
                   f"also reads FROM {table} (MySQL error 1093)")
 
+    # (3) JOIN ( SELECT ... UNION ALL SELECT ... ) alias ON ...
+    for m in re.finditer(r"\bJOIN\s*\(", text, re.I):
+        open_idx = text.index("(", m.start())
+        close_idx = matching_paren(text, open_idx)
+        if close_idx == -1:
+            continue
+        if not re.match(r"\s*`?\w+`?\s+ON\b", text[close_idx + 1:], re.I):
+            continue                       # not a derived table joined via ON
+        body = text[open_idx + 1:close_idx]
+        if not has_top_level_union_all(body):
+            continue
+        if not re.search(r"\b(?:SUM|COUNT)\s*\(", body, re.I):
+            continue
+        findings += 1
+        print(f"  {name}:{line_of(text, m.start())}  joined UNION ALL of "
+              f"aggregates without an outer GROUP BY (may multiply rows)")
+
 if findings:
     print(f"\nFAIL - {findings} risky construct(s).")
     sys.exit(1)
-print("OK - no LIMIT/OFFSET subqueries and no INSERT..SELECT on its own target.")
+print("OK - no LIMIT/OFFSET subqueries, no INSERT..SELECT on its own target, "
+      "and no joined UNION ALL of aggregates.")

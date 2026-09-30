@@ -232,6 +232,7 @@ bootstrap, so a page only downloads the controller it needs.
 | `strict_types declaration must be the very first statement` | The file starts with a UTF-8 BOM (invisible in most editors). Re-save the file as UTF-8 **without BOM**; `tests/check_php_preamble.py` finds every affected file. |
 | After sign-in the URL is `index.php.php` (or similar) | A redirect target already ended in `.php` and had it appended again. Route every `?next=` value through `safe_page()` in `src/Bootstrap.php`, which rebuilds `name.php` from an allow-list. |
 | A red "Request failed (500)" toast on every page | The API returned a non-JSON 500, meaning a PHP fatal before the router's own error handling — almost always a parse error. Run `python tests\run_checks.py` (`check_php_syntax.py` names the file and line). The endpoint also now returns the real message as JSON instead of a blank 500. |
+| Dashboard/ledger returns 400 `balances must sum to 0` | `vw_balance_sheet` counted a user twice when they both sent and received a settlement. Recreate the view from `sql/schema.sql` (see the note under the view). Ensure your DB has the fixed definition. |
 | Blank page, no output | PHP error display is off. Check `php.ini` `display_errors`, or read `error_log`. |
 | "could not find driver" | Enable `extension=pdo_mysql` in `php.ini` and restart Apache. |
 | 404 on every page | Files are outside the web root, or `base_url()` doesn't match the folder name. |
