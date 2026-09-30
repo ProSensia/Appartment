@@ -61,13 +61,20 @@ details, `RuntimeException`/`InvalidArgumentException` → `400`, `PDOException`
 
 ## Money
 
-Everything is **integer cents** from the database column to the JSON field. The
-only conversion happens in `Money::toAmount()` on the way in and
-`Money::format()` on the way out.
+MySQL stores money as `DECIMAL(12,2)` — never `FLOAT`/`DOUBLE`, never an integer
+column. `DECIMAL` is exact base-10, so `SUM()` in SQL and the
+`vw_balance_sheet` view are correct without any compensating logic.
+
+The boundary is where integers appear: `Money::toCents()` converts a
+`DECIMAL` value from a query into the integer the JSON API returns (`*_cents`),
+and `Money::toAmount()` converts an integer from the API or a form back into
+`DECIMAL` for storage. `Money::format()` is the only place that renders a
+currency string.
 
 This is not fastidiousness. Floating point is wrong at the margins that matter
 here: splitting 100.00 three ways must be 33.34 / 33.33 / 33.33, and every split
-algorithm in `DebtSimplifier` assumes integer conservation. `SelfTest` includes
+algorithm in `DebtSimplifier` assumes integer conservation — so the allocation
+runs in integer cents and is written back as `DECIMAL`. `SelfTest` includes
 an `odd_cents` case (3333/1111/1111/1111) precisely to pin this down.
 
 Two derived rules that follow:
@@ -259,6 +266,8 @@ which is why they exist: neither was available on the machine that built this.
 | Script | Catches |
 |---|---|
 | `validate_sql.py` | SQL that won't parse; dangling FK/INSERT/view references |
+| `check_insert_arity.py` | MySQL `#1136` — an INSERT whose value count doesn't match its column count |
+| `check_insert_arity_test.py` | Self-test proving the arity checker still fails on a seeded bug |
 | `check_bindings.py` | PDO placeholders with no bound value |
 | `check_placeholders.py` | A named placeholder used twice |
 | `check_references.py` | Calls to functions/classes that don't exist |
@@ -268,6 +277,14 @@ which is why they exist: neither was available on the machine that built this.
 `check_references.py` has to strip PHP out of mixed `.php` files before scanning,
 or it starts reporting HTML attributes and JavaScript strings as missing
 functions.
+
+`check_insert_arity.py` is a hand-rolled tokenizer because the failure it
+guards is invisible to a plain parse: `INSERT INTO t (a,b,c) SELECT x, y` is
+syntactically fine and only explodes on the server. It tracks string, backtick,
+comment and paren state, and stops each statement at its terminating semicolon.
+The self-test re-introduces the real historical bug (a stray `id` column) into a
+throwaway copy of `sql/` and asserts the checker rejects it — otherwise a
+checker that silently matches nothing would pass forever.
 
 **2. Algorithm self-test** (`src/SelfTest.php`) — runs in PHP against known
 inputs, no fixtures:

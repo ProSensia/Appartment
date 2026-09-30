@@ -4,8 +4,9 @@ A shared-flat manager for a single apartment. Meal planning, chore rotation,
 expense splitting, notices and resident onboarding in one PHP/MySQL app that
 runs under XAMPP with no build step and no package manager.
 
-Money is tracked in **integer cents** end to end; only the presentation layer
-converts to a currency string.
+Money is stored as `DECIMAL(12,2)` in MySQL and converted to **integer cents** by
+`Money::toCents()` / `Money::toAmount()` at the app boundary, so every amount in
+the JSON API is an integer. Only the presentation layer renders a currency string.
 
 ---
 
@@ -32,30 +33,43 @@ Nothing needs to be compiled. Clone into the web root and open it.
 2. **Create the database.** Open the XAMPP shell (or any MySQL client) and run:
 
    ```sql
-   CREATE DATABASE flatmate CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   CREATE DATABASE flatmate_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
    ```
+
+   The name is arbitrary — it just has to match `'database'` in step 4.
 
 3. **Import the schema and demo data**, in this order:
 
    ```
-   C:\xampp\mysql\bin\mysql -u root -p flatmate < sql\schema.sql
-   C:\xampp\mysql\bin\mysql -u root -p flatmate < sql\seed.sql
+   C:\xampp\mysql\bin\mysql -u root -p flatmate_db < sql\schema.sql
+   C:\xampp\mysql\bin\mysql -u root -p flatmate_db < sql\seed.sql
    ```
 
-   From phpMyAdmin: select the `flatmate` database, then **Import** each file.
+   From phpMyAdmin: select the `flatmate_db` database, then **Import** each file.
 
-4. **Set your credentials** in `config/database.php`:
+   Both files leave `CREATE DATABASE` / `USE` commented out, so the client must
+   already be pointed at the right database. Passing a name on the command line
+   (as above) is the least error-prone way; in phpMyAdmin, selecting the
+   database first is what matters. If you skip this, the import "succeeds" and
+   the app then queries an empty schema.
+
+4. **Set your credentials** in `config/config.php` — that is the only file the
+   app reads. (`config/database.php` is an optional shim that returns a PDO
+   handle; every page loads `src/Bootstrap.php` directly instead.)
 
    ```php
-   return [
+   'db' => [
        'host'     => '127.0.0.1',
        'port'     => 3306,
-       'database' => 'flatmate',
+       'database' => 'flatmate_db',
        'username' => 'root',
        'password' => '',          // XAMPP's default
        'charset'  => 'utf8mb4',
-   ];
+   ],
    ```
+
+   `base_url` is detected from the request, so it stays `''` unless you serve
+   the app from somewhere other than the URL the pages were requested from.
 
 5. **Start Apache and MySQL** in the XAMPP control panel, then visit:
 
@@ -69,8 +83,10 @@ The first request creates the session cookie and redirects to the sign-in page.
 
 ## Demo accounts
 
-`sql/seed.sql` creates one apartment ("Maple Court"), five residents, six rooms,
-chore areas, meals and expenses.
+`sql/seed.sql` creates one apartment ("Sunrise Apartments — Block C", Dhaka),
+seven user accounts, six rooms, chore areas, two weeks of meal plans and 20
+expenses with fully-split shares. Dates are generated relative to `CURDATE()`,
+so the dashboard always looks current.
 
 | Role | Email | Password |
 |---|---|---|
@@ -81,10 +97,15 @@ chore areas, meals and expenses.
 | Resident | `sabbir@flatmate.test` | `password123` |
 | Resident | `maliha@flatmate.test` | `password123` |
 
+The seventh account, `imtiaz@flatmate.test`, is deliberately left as a **pending
+invite** with an unfinished offboarding checklist, so the invite-reissue and
+offboarding screens have something real to show. It cannot sign in until the
+invite is accepted.
+
 Sign in as **Aisha** to see the admin-only affordances (invites, rooms and duty
 groups, resident status changes, offboarding, chore area editing).
 
-**The database name must match.** `config/config.php` sets `app.database`, and
+**The database name must match.** `config/config.php` sets `db.database`, and
 that has to be the same database you imported into. Both SQL files have their
 `CREATE DATABASE` / `USE` lines commented out, so nothing overrides your
 selection — select your database in phpMyAdmin first, or pass it on the CLI:
@@ -154,7 +175,7 @@ server is the only place that matters for permissions.
 ## Project layout
 
 ```
-config/     config.php (app settings), database.php (PDO credentials)
+config/     config.php (credentials + app settings); database.php (optional PDO shim)
 src/        All backend logic. One class per file, no framework.
 api/        index.php — the single JSON endpoint and its route table
 includes/   head.php / foot.php — shared page shell and navigation
@@ -172,9 +193,11 @@ bootstrap, so a page only downloads the controller it needs.
 
 ## Things worth knowing before you change the code
 
-- **Money is cents.** Columns end in `_cents`, and every value crossing into or
-  out of the API is an integer. `Money::format()` is the only place that
-  produces a string with a currency symbol.
+- **Money is DECIMAL in the DB, cents in the API.** Columns are named plainly
+  (`amount`, `share_amount`, `rent_amount`) and typed `DECIMAL(12,2)`. Only the
+  JSON API uses `_cents` suffixes, and every such value is an integer.
+  `Money::format()` is the only place that produces a string with a currency
+  symbol. Never sum cents in SQL — `SUM()` over `DECIMAL` is already exact.
 - **One named placeholder per use.** Native prepared statements reject a
   repeated `:name`, so queries that need the same value twice use `:u1`/`:u2`.
   `tests/check_bindings.py` and `check_placeholders.py` enforce both halves of
@@ -195,7 +218,9 @@ bootstrap, so a page only downloads the controller it needs.
 
 | Symptom | Cause |
 |---|---|
-| "Access denied for user 'root'@'localhost'" | Password in `config/database.php` doesn't match your MySQL. XAMPP's default is empty. |
+| "Access denied for user 'root'@'localhost'" | `db.password` in `config/config.php` doesn't match your MySQL. XAMPP's default is empty. |
+| Import "succeeds" but every page is empty / errors on a missing table | The client wasn't pointed at a database. Both SQL files have `CREATE DATABASE`/`USE` commented out — pass the name on the CLI or select it in phpMyAdmin first. |
+| `#1136 Column count doesn't match value count` | An `INSERT` lists more columns than values. `tests/check_insert_arity.py` catches this statically; run `python tests\run_checks.py`. |
 | Blank page, no output | PHP error display is off. Check `php.ini` `display_errors`, or read `error_log`. |
 | "could not find driver" | Enable `extension=pdo_mysql` in `php.ini` and restart Apache. |
 | 404 on every page | Files are outside the web root, or `base_url()` doesn't match the folder name. |

@@ -29,9 +29,11 @@ handler runs.
 **CSRF.** Cookie-authenticated `POST`s must send the token from `auth.csrf`,
 either as an `X-CSRF-Token` header or a `csrf_token` field.
 
-**Money.** Every amount crossing this boundary is an integer in cents, in a
-`*_cents` column. Nothing accepts or returns a decimal string except
-`auth.login` inputs, which are parsed and stored as cents.
+**Money.** Every amount in a response is an integer in cents under a `*_cents`
+key. (MySQL itself stores `DECIMAL(12,2)`; the conversion happens in PHP.) No
+endpoint accepts or returns a decimal string as a monetary amount — including
+`auth.login`, whose `rent_amount` input is a plain major-unit number such as
+`12000.00` and is parsed into `DECIMAL` on the way in.
 
 **Self-test.** `?verify=1` on any non-public read wraps the response as
 `{"result": ..., "verification": SelfTest::run()}`. Convenient for checking the

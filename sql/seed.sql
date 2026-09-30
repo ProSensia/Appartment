@@ -328,8 +328,11 @@ INSERT INTO `expense_categories` (`id`,`apartment_id`,`name`,`slug`,`icon`,`is_m
 --     no rounding drift, sum(share_amount) == expenses.amount for every row.
 --     Paid offsets are 0 (today) … 33 days back.
 -- ===========================================================================
+-- `id` is left to AUTO_INCREMENT so the 20 rows get 1..20 in the order below.
+-- Later sections key off those ids (e.g. activity_log entity_id 16 = EX-2026-000133),
+-- so the insert order is load-bearing — do not reorder this block.
 INSERT INTO `expenses`
-  (`id`,`apartment_id`,`reference_no`,`title`,`description`,`amount`,`paid_by_user_id`,`category_id`,
+  (`apartment_id`,`reference_no`,`title`,`description`,`amount`,`paid_by_user_id`,`category_id`,
    `split_type`,`split_meta`,`expense_date`,`is_meal_related`,`created_by`)
 SELECT 1, e.ref, e.title, e.descr, e.amt, e.payer, e.cat, e.stype, e.meta,
        DATE_SUB(CURDATE(), INTERVAL e.off DAY), e.meal, e.payer

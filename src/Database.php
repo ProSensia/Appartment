@@ -3,8 +3,9 @@
  * ---------------------------------------------------------------------------
  * FlatMate  |  Database facade
  * ---------------------------------------------------------------------------
- * Autoloaded from src/ like every other service. The single PDO handle lives
- * here; config/database.php is just the thin file that hands it to callers.
+* Autoloaded from src/ like every other service. The single PDO handle lives
+ * here; db.* credentials come from config/config.php. (config/database.php is
+ * an optional shim that returns this same handle -- pages load Bootstrap.php.)
  *
  * Everything goes through named parameters -- there is no string interpolation
  * of user input into SQL anywhere in this project.
