@@ -15,11 +15,11 @@ return [
     /*  DATABASE  —  DEMO CONNECTION CREDENTIALS                              */
     /* ------------------------------------------------------------------ */
     'db' => [
-        'host'     => '127.0.0.1',
+        'host'     => 'premium281.web-hosting.com',
         'port'     => 3306,
-        'database' => 'flatmate_db',
-        'username' => 'root',
-        'password' => '',            // XAMPP default is an empty root password
+        'database' => 'prosdfwo_greenbox',
+        'username' => 'prosdfwo_greenbox',
+        'password' => 'GreenBox@2026',            // XAMPP default is an empty root password
         'charset'  => 'utf8mb4',
 
         // PDO driver + options applied to every connection
