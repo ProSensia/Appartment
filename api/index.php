@@ -51,6 +51,12 @@ register_shutdown_function(static function (): void {
         $err['file'],
         $err['line']
     ));
+    Diag::record('fatal', $err['message'], [
+        'type' => 'php:' . $err['type'],
+        'file' => $err['file'],
+        'line' => $err['line'],
+        'action' => $action,
+    ]);
 
     if (headers_sent()) {
         return;                     // too late to replace whatever leaked out
@@ -269,6 +275,39 @@ $ROUTES = [
         (int) $i['id'], (int) Auth::id())]],
     'reminder.read_all' => ['POST', 'auth',   fn() => ['marked' => Reminder::markAllRead(
         Auth::apartmentId(), (int) Auth::id())]],
+
+    // ---- diagnostics -----------------------------------------------------
+    // The point of these is that a broken page can still explain itself.
+    // `diag` needs a session (it exposes row counts), so diag.php in the web
+    // root offers the redacted subset to an anonymous visitor -- a broken login
+    // page is exactly when that is needed.
+    'diag'             => ['GET',  'auth',   fn() => Diag::report(true)],
+    'diag.summary'     => ['GET',  'auth',   fn() => ['summary' => Diag::summary(Diag::report(true))]],
+    'diag.log'         => ['GET',  'auth',   fn(array $i) => Diag::recent((int) ($i['limit'] ?? 40))],
+    'diag.clear'       => ['POST', 'auth',   fn() => (Diag::clear() ? ['cleared' => true] : ['cleared' => false])],
+    // Browser-side errors, pushed server-side so they survive a page reload.
+    'diag.submit'      => ['POST', 'auth',   function (array $i): array {
+        $entries = is_array($i['entries'] ?? null) ? $i['entries'] : [];
+        $kept    = 0;
+        foreach (array_slice($entries, -30) as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            Diag::record(
+                'client:' . mb_substr((string) ($entry['kind'] ?? 'js'), 0, 20),
+                (string) ($entry['message'] ?? '(no message)'),
+                [
+                    'url'    => (string) ($entry['url'] ?? ''),
+                    'line'   => $entry['line'] ?? null,
+                    'status' => $entry['status'] ?? null,
+                    'body'   => mb_substr((string) ($entry['body'] ?? ''), 0, 600),
+                    'stack'  => mb_substr((string) ($entry['stack'] ?? ''), 0, 900),
+                ]
+            );
+            $kept++;
+        }
+        return ['stored' => $kept];
+    }, ['entries']],
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -348,23 +387,44 @@ try {
     Response::error($e->getMessage(), 422, 'validation_failed', $e->errors);
 
 } catch (RuntimeException | InvalidArgumentException $e) {
-    Response::error($e->getMessage(), 400, 'bad_request');
+    // A 400 from here is usually a data invariant, not a client mistake, so the
+    // ring log keeps the stack even though the browser is only told the message.
+    Diag::record('api', $e->getMessage(), [
+        'type'   => $e::class,
+        'file'   => $e->getFile() . ':' . $e->getLine(),
+        'trace'  => explode("\n", $e->getTraceAsString()),
+    ]);
+    Response::error($e->getMessage(), 400, 'bad_request', [], false);
 
 } catch (PDOException $e) {
     error_log('[FlatMate][api] ' . $e->getMessage());
+    Diag::record('pdo', $e->getMessage(), [
+        'action'  => $action,
+        'sqlstate' => $e->getCode(),
+        'file'    => $e->getFile() . ':' . $e->getLine(),
+    ]);
     $dev = config('app.env', 'local') !== 'production';
     Response::error(
         $dev ? $e->getMessage() : 'A database error occurred.',
         500,
-        'database_error'
+        'database_error',
+        [],
+        false
     );
 
 } catch (Throwable $e) {
     error_log('[FlatMate][api] ' . $e->getMessage());
+    Diag::record('throwable', $e->getMessage(), [
+        'type' => $e::class,
+        'file' => $e->getFile() . ':' . $e->getLine(),
+        'trace' => explode("\n", $e->getTraceAsString()),
+    ]);
     $dev = config('app.env', 'local') !== 'production';
     Response::error(
         $dev ? $e->getMessage() : 'Unexpected server error.',
         500,
-        'server_error'
+        'server_error',
+        [],
+        false
     );
 }

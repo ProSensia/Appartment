@@ -9,6 +9,9 @@
 </div><!-- /.fm-shell -->
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<?php /* Diagnostics loads FIRST so it can capture errors from every script
+         below it, including the ones that render the page content. */ ?>
+<script src="<?= e(asset('js/diagnostics.js')) ?>"></script>
 <script src="<?= e(asset('js/api.js')) ?>"></script>
 <script src="<?= e(asset('js/app.js')) ?>"></script>
 <?php foreach (($pageScripts ?? []) as $script): ?>
@@ -17,6 +20,12 @@
 <script>
   /* Footer clock + reminder bell are shell-level, so every page gets them. */
   document.addEventListener('DOMContentLoaded', function () {
+    /* Guarded, and not for tidiness: if diagnostics.js failed to load, an
+       unguarded ReferenceError here would abort this whole handler, taking the
+       clock and the reminder bell with it. A diagnostics feature that can break
+       the app it is diagnosing is worse than no diagnostics. */
+    if (typeof Diag !== 'undefined') Diag.mount();
+
     var clock = document.querySelector('[data-clock]');
     if (clock) {
       var tick = function () {
@@ -50,7 +59,11 @@
                 + '</div></div>';
             }).join('')
           : '<div class="text-muted-2 p-3 text-center" style="font-size:.82rem">Nothing new.</div>';
-      }).catch(function () { /* silent: the bell is not worth a toast */ });
+      }).catch(function (err) {
+        /* Silent on purpose: a failing bell should not toast every resident.
+           Diag wraps fetch, so this failure is still captured in the report. */
+        if (typeof Diag !== 'undefined') Diag.push('reminder_bell', err.message || String(err));
+      });
     };
 
     loadReminders();

@@ -1,0 +1,9 @@
+# The diagnostics ring log lives here. It must never be served over HTTP:
+# it records exception text, which can include bound parameter values.
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+</IfModule>

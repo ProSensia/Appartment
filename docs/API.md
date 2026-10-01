@@ -283,6 +283,35 @@ the author or any admin; the service enforces this, not the UI.
 
 ---
 
+## Diagnostics
+
+Not part of the app's contract — these exist so a broken install can describe
+itself. All five require a session; the anonymous entry point is `diag.php`.
+
+| Action | Method | Guard | Inputs |
+|---|---|---|---|
+| `diag` | GET | auth | — |
+| `diag.summary` | GET | auth | — |
+| `diag.log` | GET | auth | `limit?` |
+| `diag.clear` | POST | auth | → `{cleared}` |
+| `diag.submit` | POST | auth | `entries` |
+
+`diag` returns the full report (environment, connectivity, schema drift,
+checks, row counts, recent events, `error_log` tail) and is what
+`assets/js/diagnostics.js` re-renders. `diag.summary` returns just the headline
+numbers for a badge. `diag.log` returns the ring-log tail only.
+
+`diag.submit` is how the browser contributes: `assets/js/diagnostics.js` keeps
+the last 40 client events in `localStorage` (uncaught errors, unhandled promise
+rejections, and every non-2xx `fetch` with its response body) and posts them once
+per page load. The body is scrubbed server-side before it reaches the ring log.
+
+Entries are stored in `storage/diag.jsonl`, capped at 256 KB with a single
+rotation. That file is denied over HTTP by `storage/.htaccess` and excluded by
+`.gitignore`; `tests/check_diag_wiring.py` fails the build if either is removed.
+
+---
+
 ## Notes for integrators
 
 - Prefer `expense.count` over fetching `limit=999`. It takes identical filters.

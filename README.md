@@ -138,6 +138,46 @@ schema than the app is reading.
 
 ---
 
+## When something breaks
+
+Every page in this app has a **Report** button in the bottom-right corner, and
+there is a standalone **`/diag.php`** page. Both produce a single block of text
+describing what went wrong — that block is the fastest way to get a fix.
+
+**Open `/diag.php`.** It is deliberately outside the app shell and reachable
+without a session, because the times you need it are when login is broken and
+every normal page is blank. Signed out it shows environment, connectivity,
+database-vs-`schema.sql` drift and per-check results; signed in it adds row
+counts, the recent event log and the php `error_log` tail. Copy the report and
+paste it.
+
+It answers the question a toast cannot:
+
+| Question | Where it shows up |
+|---|---|
+| Which request failed, and what did the server actually say? | Checks table — one row per query, the failing ones in red |
+| Is my database behind `sql/schema.sql`? | "Database vs sql/schema.sql" card — missing tables/columns listed by name |
+| Do the balances still cancel out? | The `balances sum to zero` check |
+| Is a required PHP extension missing? | Red row naming it (`pdo_mysql`, `mbstring`, …) |
+| Is `storage/` writable, so errors are being recorded at all? | Storage card |
+| What broke on the page I was just looking at? | Client events — uncaught errors, failed promises, every non-2xx fetch |
+
+**Client-side errors are captured automatically.** `assets/js/diagnostics.js`
+wraps `window.fetch`, so *every* failed API call is recorded with its action
+name, status and response body — including failures that a caller deliberately
+swallows (the reminder bell does). Entries are kept in `localStorage`, so they
+survive a reload, and pushed to the server once per page load so a page that
+then went blank is still recoverable.
+
+The ring log lives at `storage/diag.jsonl` (capped at 256 KB, rotated once).
+`storage/.htaccess` denies it over HTTP and `.gitignore` keeps it out of commits;
+`tests/check_diag_wiring.py` enforces both, so the log cannot quietly become the
+one file you upload by accident.
+
+Clear it with `?action=diag.clear` (POST) or by deleting the file.
+
+---
+
 ## Verifying the install
 
 Two independent checks, neither of which needs a working browser.
@@ -175,8 +215,16 @@ every column named in a query actually exists in the schema
 multiply rows; that every PHP file both loads (BOM / misplaced `declare`) and
 compiles; that every named PDO placeholder is bound, none is duplicated, and
 none is bound that the statement never declares (all `HY093`); that cross-class
-references resolve; that route handlers are wired sane; and that every
-front-end JS file parses.
+references resolve; that route handlers are wired sane; that no `: void`
+function's return value is read; that the diagnostics log cannot be served over
+HTTP, committed, or loaded too late to see anything; and that every front-end JS
+file parses.
+
+Several checks are paired with a **negative self-test** that breaks the
+guarantee in a temp directory and asserts the checker notices. A checker that
+quietly stops matching is worse than no checker, so each one is required to fail
+on a deliberately broken copy of the codebase before it is allowed to pass on
+the real one.
 
 ---
 
@@ -205,9 +253,11 @@ src/        All backend logic. One class per file, no framework.
 api/        index.php — the single JSON endpoint and its route table
 includes/   head.php / foot.php — shared page shell and navigation
 assets/     css/style.css, js/*.js — no framework, no bundler
-sql/        schema.sql, seed.sql
+sql/        schema.sql, seed.sql, patch.sql
+storage/    Diagnostics ring log (web-denied, git-ignored, keep empty)
 tests/      Static checks and the algorithm self-test
 docs/       API.md, ARCHITECTURE.md
+diag.php    Standalone diagnostics report — see "When something breaks"
 ```
 
 PHP is server-rendered for the page skeleton and JSON for everything dynamic.
@@ -265,6 +315,9 @@ bootstrap, so a page only downloads the controller it needs.
 | `SQLSTATE[42S22]: Column not found: 1054 Unknown column 'x.y'` | A query names a column that doesn't exist. Run `python tests\run_checks.py`; `check_sql_columns.py` names the file, line and missing column. Note `meals.locked` and `meal_plans.status` are *different* columns, so "is the week locked" reads the plan. |
 | `SQLSTATE[HY093]: Invalid parameter number: parameter was not defined` | Either a `:name` used twice in one statement (use `:n1`/`:n2`), or a value bound that the SQL never declares — usually a leftover `$params['...']` from a sibling query. `check_placeholders.py` and `check_bindings.py` catch both. |
 | `Argument #1 ($inviteId) must be of type int, array given` | A row was passed to a function that expects an id. `array_map` over a query result hands each row as an array — decorate the row instead (see `decorateInviteRow()`). |
+| A page is blank or half-rendered and you don't know why | Open `/diag.php` and copy the report. It names the failing query and, critically, tells you whether your database is behind `sql/schema.sql`. |
+| The Report button's badge shows a number you don't recognise | Errors seen since you last opened it. Click it — the report includes each one's action, status and response body. |
+| `storage/` is not writable | Set it to `775` (or `777` on shared hosting) and make sure the PHP user owns it. Server-side events then fall back to `error_log` only; the in-page report still works. |
 | Blank page, no output | PHP error display is off. Check `php.ini` `display_errors`, or read `error_log`. |
 | "could not find driver" | Enable `extension=pdo_mysql` in `php.ini` and restart Apache. |
 | 404 on every page | Files are outside the web root, or `base_url()` doesn't match the folder name. |

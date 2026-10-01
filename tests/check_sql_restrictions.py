@@ -1,4 +1,4 @@
-"""Catch three MySQL restrictions that a plain parse happily accepts.
+"""Catch four MySQL (and deployment) hazards that a plain parse happily accepts.
 
 1. A subquery whose LIMIT/OFFSET refers to a column of the enclosing query.
    MySQL cannot resolve outer references in a subquery's LIMIT/OFFSET, so this
@@ -11,6 +11,10 @@
    and results keyed by user id silently drop rows, so the ledger stops summing
    to zero. vw_balance_sheet did this with settlements and broke every balance
    read (HTTP 400 from DebtSimplifier). Collapse the union with an outer GROUP BY.
+4. sql/patch.sql promising to be additive. It exists so the fix can be applied
+   to a live database, so a DROP TABLE or DELETE FROM in it would defeat its only
+   purpose -- and unlike a bad CREATE TABLE, the damage is already done by the
+   time MySQL complains.
 
 Comments are stripped first, so prose describing a bad pattern does not trip it.
 """

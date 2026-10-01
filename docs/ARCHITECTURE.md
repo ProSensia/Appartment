@@ -209,6 +209,65 @@ downloads only its own controller.
   `auth.csrf`, bearer support.
 - `app.js` — the shell: toasts, nav drawer, modal helpers, confirmation,
   validation-error rendering.
+- `diagnostics.js` — loads **before** both of the above (see below).
+
+### Diagnostics
+
+The failure mode this app kept hitting was a page that renders half a screen and
+a toast that says `Request failed (500)`. Neither says which statement failed, so
+each fix required guessing. Diagnostics exist to turn that into one pasteable
+block.
+
+Two halves, because the failures are of two kinds.
+
+**Server (`src/Diag.php`).** `Diag::report()` describes the installation in one
+request. The part that earns its keep is schema drift: it parses
+`sql/schema.sql` off disk, asks `information_schema` what the server actually
+has, and reports missing tables, missing columns and missing views by name. Every
+`1054` and `1136` seen so far was the code and the database disagreeing, and
+"which one is stale" is otherwise invisible from a browser. The `checks` array
+then runs one representative query per feature area, so a broken statement is
+reported by name rather than as a blank board — including the
+`SUM(net_balance) = 0` invariant that `DebtSimplifier` depends on.
+
+**Client (`assets/js/diagnostics.js`).** Wraps `window.fetch`, so every non-2xx
+API call is captured with its action, status and response body. Wrapping `fetch`
+rather than instrumenting call sites is deliberate: it is the one place that
+cannot be forgotten, and it catches failures a caller deliberately swallows —
+`loadReminders()` in `includes/foot.php` discards its own errors because a failing
+bell should not toast every resident, which is precisely why it went unnoticed.
+The response body is cloned and read on failure, because an HTML 500 page is the
+most useful thing to capture and by the time `ApiError` is constructed it is gone.
+
+Entries live in `localStorage` (last 40, so they survive a reload) and are pushed
+to the server once per page load via `diag.submit`, which is the only way a page
+that errored and then went blank can still be diagnosed afterwards.
+
+Ordering is load-bearing: `diagnostics.js` must be first, before `api.js` and
+`app.js`, or it can only observe its own button. `includes/foot.php` also calls
+`Diag.mount()`.
+
+**Two security properties, both enforced by `tests/check_diag_wiring.py`:**
+
+- `storage/.htaccess` denies the ring log over HTTP. It lives inside the
+  directory rather than only in the root `.htaccess` so it still holds when the
+  root file is ignored or nginx serves the site. The log holds exception text and
+  SQL fragments, which is exactly the material worth having in a bug report and
+  exactly the material worth keeping off the open web.
+- `.gitignore` excludes `storage/*.jsonl`, so it is not committed with the fix
+  that produced it.
+
+`Diag::scrub()` redacts anything whose key looks like a secret before it reaches
+the log at all, so `db.password` and CSRF tokens cannot accumulate there. The
+whole class is failure-tolerant by contract: a diagnostic tool that throws is
+worse than none, so `record()` swallows its own failures and falls back to
+`error_log()`.
+
+`diag.php` is deliberately outside the app shell and reachable without a session,
+since the moments you need it are exactly the moments login is broken. Signed out
+it returns only `Diag::report(false)` — environment, connectivity, drift and
+checks — because an anonymous visitor must not be able to read row counts or the
+error-log tail.
 
 ### Delegation and the confirmation dialog
 
@@ -277,6 +336,10 @@ which is why they exist: neither was available on the machine that built this.
 | `check_placeholders.py` | A named placeholder used twice |
 | `check_references.py` | Calls to functions/classes that don't exist |
 | `check_routes.py` | Route handlers wired as arrays instead of callables |
+| `check_void_returns.py` | Reading the result of a `: void` function — a fatal at runtime that `php -l` cannot see |
+| `check_void_returns_test.py` | Self-test proving the void-return checker still catches a reintroduced misuse |
+| `check_diag_wiring.py` | The diagnostics ring log being web-readable, committable, or the client collector loading too late to see anything |
+| `check_diag_wiring_test.py` | Self-test proving the wiring checker still fails on a leaky setup |
 | `check_js.py` | Front-end JS that doesn't parse |
 
 `check_references.py` has to strip PHP out of mixed `.php` files before scanning,

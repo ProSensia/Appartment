@@ -1,0 +1,14 @@
+# Diagnostics ring log: machine-generated, contains exception text and SQL
+# fragments. Never commit it.
+storage/*.jsonl
+storage/*.jsonl.*
+storage/*.log
+
+# Uploads are user content.
+/uploads/*
+!/uploads/.gitkeep
+
+# Local tooling
+node_modules/
+tests/node_modules/
+tests/package-lock.json

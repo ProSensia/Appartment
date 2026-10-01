@@ -1,0 +1,55 @@
+# ===========================================================================
+#  FlatMate  |  Apache configuration
+# ---------------------------------------------------------------------------
+#  Only needed on hosts that serve Apache directly (most shared PHP hosting).
+#  If nginx serves your site, ask the host to deny these paths instead -- the
+#  .htaccess inside storage/ covers the log even when this file is ignored.
+# ===========================================================================
+
+# ---- never serve the credentials or the error log ------------------------
+<IfModule mod_authz_core.c>
+    <FilesMatch "^(config\.php|database\.php)$">
+        Require all denied
+    </FilesMatch>
+</IfModule>
+<IfModule !mod_authz_core.c>
+    <FilesMatch "^(config\.php|database\.php)$">
+        Order deny,allow
+        Deny from all
+    </FilesMatch>
+</IfModule>
+
+RedirectMatch 404 (?i)^.*/(config|storage|tests|sql|docs|uploads)/.*$
+RedirectMatch 404 (?i)^.*/\.(htaccess|htpasswd|validate_sql\.py|gitignore).*$
+
+# ---- hide directory listings --------------------------------------------
+Options -Indexes
+
+# ---- the app has no need for either --------------------------------------
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "same-origin"
+</IfModule>
+
+# ---- front controller: /expenses -> expenses.php -------------------------
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Keep real files (assets, api/index.php) working.
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Bare names resolve to their .php page: /chores -> chores.php
+    RewriteRule ^(index|meals|chores|expenses|residents|notices|login|logout|join|diag)$ $1.php [L]
+</IfModule>
+
+# ---- static assets: revalidate instead of re-downloading ------------------
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css            "access plus 7 days"
+    ExpiresByType application/javascript "access plus 7 days"
+    ExpiresByType image/svg+xml       "access plus 30 days"
+    ExpiresByType image/png           "access plus 30 days"
+</IfModule>

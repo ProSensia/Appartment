@@ -226,6 +226,7 @@ final class Database
 
     private static function fail(string $message, Throwable $e, bool $verbose): never
     {
+        Diag::record('db_connect', $e->getMessage(), ['user_visible' => $message]);
         error_log('[FlatMate][DB] ' . $e->getMessage());
         http_response_code(500);
         header('Content-Type: text/html; charset=utf-8');

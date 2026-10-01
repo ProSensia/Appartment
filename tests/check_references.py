@@ -57,6 +57,12 @@ file_get_contents file_put_contents fopen fclose
 filter_var function_exists define dirname basename filemtime
 date_default_timezone_set date_default_timezone_get
 array_walk_recursive usort
+file is_file filesize is_readable is_writable is_bool is_int rename unlink copy
+mkdir rmdir sys_get_temp_dir tempnam ini_get ini_set
+extension_loaded get_loaded_extensions php_sapi_name php_uname
+debug_backtrace debug_print_backtrace
+preg_match_all preg_last_error
+array_key_first intdiv str_word_count
 """.split())
 
 # `self`, `parent`, `static` and friends: not calls.
