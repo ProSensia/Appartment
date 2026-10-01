@@ -30,6 +30,10 @@ final class Diag
     private const LOG_NAME       = 'diag.jsonl';
     private const LOG_MAX_BYTES  = 262144;   // 256 KB, then rotate to .1
     private const LOG_KEEP_LINES = 120;
+    private const LOG_DEDUPE_SEC = 300;      // collapse repeats inside this window
+
+    /** Memoised sql/schema.sql parse. Populated by schemaTables(). */
+    private static ?array $schemaTables = null;
 
     /* ======================================================================= */
     /*  Ring log                                                               */
@@ -71,9 +75,111 @@ final class Diag
                 @rename($file, $file . '.1');
             }
 
+            // Collapse a repeat of the immediately preceding event into a count.
+            // A retry loop or a runaway page can otherwise emit thousands of
+            // identical lines and push the one genuine failure out of the ring
+            // buffer -- the report then shows noise instead of the cause.
+            if (self::collapseRepeat($file, $entry)) {
+                return;
+            }
+
             @file_put_contents($file, $line . "\n", FILE_APPEND | LOCK_EX);
         } catch (Throwable) {
             // Intentionally empty: see the docblock.
+        }
+    }
+
+    /**
+     * If the last line is the same event within LOG_DEDUPE_SEC, bump its count
+     * instead of appending. Returns true when the line was folded in.
+     *
+     * Append-only is the contract for a log, so this only ever rewrites the
+     * final line, and only after confirming it starts at a line boundary and
+     * parses. Any doubt and it appends -- a duplicated entry is a far smaller
+     * problem than a truncated log.
+     */
+    private static function collapseRepeat(string $file, array $entry): bool
+    {
+        $size = @filesize($file);
+        if ($size === false || $size === 0 || $size > self::LOG_MAX_BYTES) {
+            return false;
+        }
+
+        $fh = @fopen($file, 'r+b');
+        if ($fh === false) {
+            return false;
+        }
+
+        try {
+            if (!flock($fh, LOCK_EX)) {
+                return false;
+            }
+
+            // Only the tail is needed, and only a bounded slice of it.
+            $window = (int) min($size, 8192);
+            $from   = $size - $window;
+            if ($from < 0 || fseek($fh, $from) !== 0) {
+                return false;
+            }
+            $tail = (string) fread($fh, $window);
+            if ($tail === '' || !str_ends_with($tail, "\n")) {
+                return false;
+            }
+
+            // Isolate the final complete line: everything up to the last
+            // newline. It only counts as complete if the newline before it is
+            // also inside the window -- otherwise the window cut into the
+            // middle of the line and rewriting it would leave a fragment behind.
+            $cut  = strlen($tail) - 1;
+            $prev = strrpos(substr($tail, 0, $cut), "\n");
+            if ($prev === false) {
+                // The line runs to the start of the window, so confirm it really
+                // starts a line rather than continuing one from further back.
+                if ($from > 0) {
+                    if (fseek($fh, $from - 1) !== 0 || fread($fh, 1) !== "\n") {
+                        return false;
+                    }
+                }
+                $start = 0;
+            } else {
+                $start = $prev + 1;
+            }
+            $lineStart = $from + $start;
+
+            $last = json_decode(substr($tail, $start, $cut - $start), true);
+            if (!is_array($last) || !isset($last['t'], $last['msg'])) {
+                return false;
+            }
+
+            $age = time() - (int) strtotime((string) $last['t']);
+            if ($age < 0 || $age > self::LOG_DEDUPE_SEC) {
+                return false;
+            }
+            if ($last['msg'] !== $entry['msg']
+                || ($last['level'] ?? '') !== $entry['level']
+                || ($last['action'] ?? '') !== $entry['action']) {
+                return false;
+            }
+
+            $entry['n'] = (int) ($last['n'] ?? 1) + 1;
+            $replacement = json_encode(
+                $entry,
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+            );
+            if (!is_string($replacement)) {
+                return false;
+            }
+
+            // Truncate away the old final line, keeping everything before it.
+            if (ftruncate($fh, $lineStart) !== true) {
+                return false;
+            }
+
+            return fwrite($fh, $replacement . "\n") !== false;
+        } catch (Throwable) {
+            return false;
+        } finally {
+            @fclose($fh);
         }
     }
 
@@ -387,7 +493,7 @@ final class Diag
             return $info;
         }
 
-        $expected = self::parseSchemaTables((string) file_get_contents($file));
+        $expected = self::schemaTables();
         $info['expected_tables'] = count($expected);
         if ($expected === []) {
             $info['status'] = 'schema.sql contained no CREATE TABLE statements';
@@ -395,40 +501,20 @@ final class Diag
         }
 
         try {
-            $live = Database::conn()->query(
+            $rows = Database::conn()->query(
                 'SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS
                   WHERE TABLE_SCHEMA = DATABASE()'
-            )->fetchAll(PDO::FETCH_KEY_PAIR);
+            )->fetchAll(PDO::FETCH_ASSOC);
 
-            $liveTables = [];
-            foreach ($live as $table => $_) {
-                $liveTables[strtolower((string) $table)] = true;
-            }
-            $info['present_tables'] = count($liveTables);
+            $info = array_merge($info, self::diffColumns($expected, $rows));
 
-            foreach ($expected as $table => $cols) {
-                if (!isset($liveTables[$table])) {
-                    $info['missing_tables'][] = $table;
-                    continue;
-                }
-                foreach ($cols as $col) {
-                    if (!array_key_exists("$table.$col", $live)) {
-                        $info['missing_columns'][] = "$table.$col";
-                    }
-                }
-            }
-            // Columns the code never asks for are harmless but worth knowing.
-            foreach ($live as $tableCol => $_) {
-                $table = strtolower(substr((string) $tableCol, 0, (int) strpos((string) $tableCol, '.')));
-                if (isset($expected[$table]) && !in_array(substr((string) $tableCol, (int) strpos((string) $tableCol, '.') + 1), $expected[$table], true)) {
-                    $info['extra_columns'][] = (string) $tableCol;
-                }
-            }
-
-            $views = array_column(Database::conn()->query(
-                'SELECT TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE()'
-            )->fetchAll(PDO::FETCH_ASSOC), 'TABLE_NAME');
-            $info['present_views'] = array_values($views);
+            $views = array_map(
+                static fn(array $r): string => strtolower((string) $r['TABLE_NAME']),
+                Database::conn()->query(
+                    'SELECT TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE()'
+                )->fetchAll(PDO::FETCH_ASSOC)
+            );
+            $info['present_views'] = $views;
 
             foreach (['vw_balance_sheet', 'vw_today_chores', 'vw_meal_coverage'] as $view) {
                 if (!in_array($view, $views, true)) {
@@ -451,6 +537,82 @@ final class Diag
             : 'OUT OF SYNC with sql/schema.sql';
 
         return $info;
+    }
+
+    /**
+     * Compare sql/schema.sql against information_schema, purely.
+     *
+     * No PDO and no globals, so the comparison can be tested on its own -- which
+     * matters because this is the code that answers "is my database stale?", and
+     * a wrong answer sends someone to run a migration they do not need.
+     *
+     * It takes raw associative rows rather than a prepared lookup map on
+     * purpose. The first version asked PDO for FETCH_KEY_PAIR over
+     * (TABLE_NAME, COLUMN_NAME), which collapses the ~244 rows to 23 keys --
+     * the table names, with only the last column surviving each -- and then
+     * looked up "apartments.id" in a map whose keys were just "apartments". Every
+     * column in the database was reported missing, and extra_columns came back
+     * permanently empty. On a fully healthy install it printed 244 problems.
+     *
+     * @param array<string, list<string>> $expected {table: [columns]} from schema.sql
+     * @param list<array<string, string>> $rows information_schema.COLUMNS rows
+     * @return array{missing_tables: list<string>, missing_columns: list<string>,
+     *               extra_columns: list<string>, present_tables: int}
+     */
+    public static function diffColumns(array $expected, array $rows): array
+    {
+        $live      = [];       // "table.column" => true
+        $liveTables = [];      // table => true
+        foreach ($rows as $row) {
+            $table  = strtolower((string) ($row['TABLE_NAME'] ?? ''));
+            $column = strtolower((string) ($row['COLUMN_NAME'] ?? ''));
+            if ($table === '') {
+                continue;
+            }
+            $liveTables[$table] = true;
+            if ($column !== '') {
+                $live[$table . '.' . $column] = true;
+            }
+        }
+
+        $missingTables  = [];
+        $missingColumns = [];
+        foreach ($expected as $table => $cols) {
+            $table = strtolower($table);
+            if (!isset($liveTables[$table])) {
+                $missingTables[] = $table;
+                continue;       // every column of a missing table is "missing"
+            }
+            foreach ($cols as $col) {
+                if (!isset($live[$table . '.' . strtolower($col)])) {
+                    $missingColumns[] = $table . '.' . strtolower($col);
+                }
+            }
+        }
+
+        // Columns the schema no longer declares. Harmless, but they usually mean
+        // schema.sql is behind the database rather than the other way round --
+        // the opposite conclusion from a missing column, so worth surfacing.
+        $extra = [];
+        foreach ($live as $tableCol => $_) {
+            $dot = (int) strpos($tableCol, '.');
+            $table = substr($tableCol, 0, $dot);
+            if (!isset($expected[$table])) {
+                continue;       // extra table entirely; not this check's business
+            }
+            $column = substr($tableCol, $dot + 1);
+            if (!in_array($column, array_map('strtolower', $expected[$table]), true)) {
+                $extra[] = $tableCol;
+            }
+        }
+        sort($extra);
+
+        return [
+            'missing_tables'  => $missingTables,
+            'missing_columns' => $missingColumns,
+            'extra_columns'   => $extra,
+            'present_tables'  => count($liveTables),
+        ];
     }
 
     /**
@@ -531,20 +693,35 @@ final class Diag
 
     private static function dataInfo(): array
     {
+        // Driven by sql/schema.sql rather than a hand-written list. Row counts
+        // are decoration, but a list that names a table the schema never had --
+        // as this one did with `notices` -- turns a healthy install into a page
+        // full of "error: table doesn't exist". The schema is the single source
+        // of truth for what exists.
         $counts = [];
-        foreach ([
-            'users', 'rooms', 'duty_groups', 'chore_areas', 'chore_tasks',
-            'meal_plans', 'meals', 'meal_participants', 'expenses',
-            'expense_splits', 'settlements', 'notices', 'invites',
-            'activity_log', 'reminders',
-        ] as $table) {
+        foreach (array_keys(self::schemaTables()) as $table) {
             try {
                 $counts[$table] = (int) Database::value("SELECT COUNT(*) FROM `$table`");
             } catch (Throwable $e) {
-                $counts[$table] = 'error: ' . $e->getMessage();
+                // Expected when the database is behind the schema: schemaInfo
+                // already reports the drift, so this just stays quiet.
+                $counts[$table] = null;
             }
         }
         return $counts;
+    }
+
+    /** {table: [columns]} from sql/schema.sql, read at most once per request. */
+    private static function schemaTables(): array
+    {
+        if (self::$schemaTables !== null) {
+            return self::$schemaTables;
+        }
+
+        $path = dirname(__DIR__) . '/sql/schema.sql';
+        $sql  = is_readable($path) ? (string) file_get_contents($path) : '';
+
+        return self::$schemaTables = self::parseSchemaTables($sql);
     }
 
     private static function sessionInfo(): array
@@ -645,17 +822,36 @@ final class Diag
 
         // One representative query per feature area, so a stale column in, say,
         // the chores feed is reported by name rather than as a blank board.
+        //
+        // Every table named here is verified against sql/schema.sql first. A
+        // hand-written list of tables is a list that drifts: this one carried a
+        // `notices` check, but the schema has always called the table
+        // `announcements`, so the check reported a fatal 1146 against a table
+        // that never existed and buried the twelve checks that did work.
+        $tables = array_keys(self::schemaTables());
+        $has = static fn(string $t): bool => in_array($t, $tables, true);
+
         foreach ([
-            'dashboard users'    => 'SELECT COUNT(*) FROM vw_balance_sheet WHERE status IN ("active","invited")',
-            'chore board'        => 'SELECT COUNT(*) FROM vw_today_chores',
-            'meal coverage'      => 'SELECT COUNT(*) FROM vw_meal_coverage',
-            'expense ledger'     => 'SELECT COUNT(*) FROM expenses WHERE is_deleted = 0',
-            'settlements'        => 'SELECT COUNT(*) FROM settlements',
-            'activity feed'      => 'SELECT COUNT(*) FROM activity_log',
-            'reminders'          => 'SELECT COUNT(*) FROM reminders',
-            'notices'            => 'SELECT COUNT(*) FROM notices',
-            'invites'            => 'SELECT COUNT(*) FROM invites',
-        ] as $label => $sql) {
+            'dashboard users'    => ['SELECT COUNT(*) FROM vw_balance_sheet WHERE status IN ("active","invited")', null],
+            'chore board'        => ['SELECT COUNT(*) FROM vw_today_chores', null],
+            'meal coverage'      => ['SELECT COUNT(*) FROM vw_meal_coverage', null],
+            'expense ledger'     => ['SELECT COUNT(*) FROM expenses WHERE is_deleted = 0', 'expenses'],
+            'settlements'        => ['SELECT COUNT(*) FROM settlements', 'settlements'],
+            'activity feed'      => ['SELECT COUNT(*) FROM activity_log', 'activity_log'],
+            'reminders'          => ['SELECT COUNT(*) FROM reminders', 'reminders'],
+            'announcements'      => ['SELECT COUNT(*) FROM announcements', 'announcements'],
+            'notice reads'       => ['SELECT COUNT(*) FROM announcement_reads', 'announcement_reads'],
+            'invites'            => ['SELECT COUNT(*) FROM invites', 'invites'],
+            'chore areas'        => ['SELECT COUNT(*) FROM chore_areas', 'chore_areas'],
+            'meal suggestions'   => ['SELECT COUNT(*) FROM meal_suggestions', 'meal_suggestions'],
+            'expense categories' => ['SELECT COUNT(*) FROM expense_categories', 'expense_categories'],
+        ] as $label => [$sql, $table]) {
+            if ($table !== null && !$has($table)) {
+                // Not in schema.sql, so this check is describing an imaginary
+                // table. Say so rather than asserting the app is broken.
+                $add($label, false, 'table `' . $table . '` is not in sql/schema.sql', false);
+                continue;
+            }
             try {
                 $add($label, true, (string) Database::value($sql) . ' row(s)', false);
             } catch (Throwable $e) {

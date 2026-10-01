@@ -84,7 +84,20 @@ Two derived rules that follow:
   remainder into a designated row.
 - **Native prepared statements reject a repeated named placeholder.** Queries
   needing the same value twice use `:u1`/`:u2`. `tests/check_placeholders.py`
-  fails the build on a duplicate, so this never gets forgotten.
+  fails the build on a duplicate, so this never gets forgotten. That checker
+  scans string literals individually rather than whole statements, because a
+  query is often assembled at runtime from `$where[]` fragments that are not
+  valid SQL on their own — and that is precisely where
+  `ExpenseService::filterClause()` hid a reused `:q` until someone searched.
+
+  **Every one of these is `SQLSTATE[HY093]: Invalid parameter number`**, which
+  names neither the statement nor the placeholder, so a single unbound name can
+  hide in a helper several call layers away. `Database::query()` therefore checks
+  bindings itself on every call and throws a `RuntimeException` naming the SQL and
+  the specific problem (repeated / unbound / undeclared), because the alternative
+  is a log line reading only `Database.php:64`. Positional statements are counted
+  rather than name-matched, since `DutyScheduler` legitimately uses `IN (?,?,?)`
+  bound to a plain list.
 
 ---
 
@@ -243,6 +256,26 @@ Entries live in `localStorage` (last 40, so they survive a reload) and are pushe
 to the server once per page load via `diag.submit`, which is the only way a page
 that errored and then went blank can still be diagnosed afterwards.
 
+Reporting is deliberately prevented from reporting on itself, because the first
+version of this did and it destroyed the very evidence it existed to preserve:
+
+- The `fetch` wrapper ignores any request whose action starts with `diag`, so a
+  failing reporting channel can never spawn new entries.
+- A successful submit **drains** the entries it sent. Without this the queue was
+  never emptied, so every subsequent page load re-posted the same 30 entries and
+  the ring log filled with duplicates until the early, interesting errors had
+  rotated out.
+- After three consecutive submit failures the channel is disabled for that page
+  load, so a broken API is not hammered on every navigation.
+- `push()` collapses an immediate repeat into a `count` instead of appending,
+  and `Diag::record()` folds a repeated server-side event into `n` by rewriting
+  the final line of the ring log (only ever that line, only after confirming it
+  is complete and parses, under `flock`, and only within `LOG_DEDUPE_SEC`).
+
+The net effect is that a loop produces `x47` instead of 47 lines, and the one
+genuine failure stays in the buffer. `tests/check_diag_log_fold.py` exercises the
+offset arithmetic against real files, because a mistake there corrupts the log.
+
 Ordering is load-bearing: `diagnostics.js` must be first, before `api.js` and
 `app.js`, or it can only observe its own button. `includes/foot.php` also calls
 `Diag.mount()`.
@@ -333,13 +366,16 @@ which is why they exist: neither was available on the machine that built this.
 | `check_php_preamble.py` | A UTF-8 BOM or stray output before `declare(strict_types=1)` |
 | `check_php_syntax.py` | PHP that does not compile at all (`php -l`, or Node php-parser) |
 | `check_bindings.py` | PDO placeholders with no bound value, **and** bound names the statement never declares (both `HY093`) |
-| `check_placeholders.py` | A named placeholder used twice |
+| `check_placeholders.py` | A named placeholder used twice (per string literal, so runtime-assembled clauses are covered) |
+| `check_db_bindings_runtime.py` | `Database::query()`'s runtime binding assertion rejecting a valid query, or missing an `HY093` cause |
+| `check_diag_log_fold.py` | The ring log losing or corrupting entries while folding repeats |
 | `check_references.py` | Calls to functions/classes that don't exist |
 | `check_routes.py` | Route handlers wired as arrays instead of callables |
 | `check_void_returns.py` | Reading the result of a `: void` function — a fatal at runtime that `php -l` cannot see |
 | `check_void_returns_test.py` | Self-test proving the void-return checker still catches a reintroduced misuse |
 | `check_diag_wiring.py` | The diagnostics ring log being web-readable, committable, or the client collector loading too late to see anything |
 | `check_diag_wiring_test.py` | Self-test proving the wiring checker still fails on a leaky setup |
+| `check_diag_schema_parse_test.py` | Diagnostics schema diff parser: covers the collapsed `PDO::FETCH_KEY_PAIR` false positive and actual drift |
 | `check_js.py` | Front-end JS that doesn't parse |
 
 `check_references.py` has to strip PHP out of mixed `.php` files before scanning,

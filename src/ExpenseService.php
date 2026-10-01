@@ -522,8 +522,16 @@ final class ExpenseService
             $where[] = 'e.is_disputed = 1';
         }
         if (!empty($filters['q'])) {
-            $where[] = '(e.title LIKE :q OR e.description LIKE :q OR e.reference_no LIKE :q)';
-            $params['q'] = '%' . $filters['q'] . '%';
+            // Three occurrences, so three placeholders. Native prepared statements
+            // cannot reuse one name: PDO emits one positional marker per
+            // occurrence and binding `:q` once then leaves two unbound, which is
+            // SQLSTATE[HY093]. It only bites when someone actually searches, so
+            // the filter looked fine until then.
+            $where[] = '(e.title LIKE :q1 OR e.description LIKE :q2 OR e.reference_no LIKE :q3)';
+            $needle  = '%' . $filters['q'] . '%';
+            $params['q1'] = $needle;
+            $params['q2'] = $needle;
+            $params['q3'] = $needle;
         }
 
         return [$where, $params];

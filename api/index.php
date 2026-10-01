@@ -293,6 +293,11 @@ $ROUTES = [
             if (!is_array($entry)) {
                 continue;
             }
+            // A misbehaving client can submit strings that look large. Only a
+            // small, whitelisted set of keys ever reach the ring log.
+            $allowed = ['kind', 'message', 'url', 'line', 'status', 'body', 'stack', 'action', 'code', 'details', 'file', 'column', 'count'];
+            $entry   = array_intersect_key($entry, array_flip($allowed));
+
             Diag::record(
                 'client:' . mb_substr((string) ($entry['kind'] ?? 'js'), 0, 20),
                 (string) ($entry['message'] ?? '(no message)'),

@@ -29,6 +29,10 @@ const Diag = (() => {
   let seen    = Number(localStorage.getItem(SEEN_KEY) || 0);
   let server  = null;
   let serverError = '';
+  // Submit-health state. Kept in memory on purpose: a broken channel should
+  // stop retrying this page, and a fresh reload gets a clean attempt.
+  let submitFails = 0;
+  let submitDisabled = false;
 
   function load() {
     try {
@@ -50,10 +54,25 @@ const Diag = (() => {
 
   function push(kind, message, extra = {}) {
     try {
+      const text = String(message == null ? '(empty)' : message).slice(0, 2000);
+      const here = location.pathname + location.search;
+
+      // The same error firing in a loop is one fact, not N. Collapsing repeats
+      // keeps the log readable and stops a runaway page from evicting the
+      // earlier, more interesting entries.
+      const last = entries[entries.length - 1];
+      if (last && last.kind === kind && last.message === text && last.url === here) {
+        last.count = (last.count || 1) + 1;
+        last.at = new Date().toISOString();
+        persist();
+        paint();
+        return;
+      }
+
       entries.push(Object.assign({
         kind,
-        message: String(message == null ? '(empty)' : message).slice(0, 2000),
-        url: location.pathname + location.search,
+        message: text,
+        url: here,
         at: new Date().toISOString(),
       }, extra));
       if (entries.length > MAX_ENTRIES) {
@@ -102,6 +121,11 @@ const Diag = (() => {
         try { return new URL(url, location.href).searchParams.get('action') || ''; }
         catch (_) { return ''; }
       })();
+
+      // Diagnostics are never a subject of diagnostics. Reporting the failure of
+      // the reporting channel turns one real error into an unbounded stream of
+      // new ones, which is what buried the original problem last time.
+      if (action.startsWith('diag')) return nativeFetch(input, init);
 
       let res;
       try {
@@ -201,6 +225,7 @@ const Diag = (() => {
         lines.push('--- recent server-side events ---');
         log.forEach((l) => lines.push(
           `  [${l.t || '?'}] ${l.level || '?'} ${l.msg || ''}`
+          + (l.n > 1 ? ` (x${l.n})` : '')
           + (l.action ? ` (action=${l.action})` : '')
           + (l.ctx && l.ctx.where ? ` @ ${l.ctx.where}` : '')
           + (l.ctx && l.ctx.file ? ` @ ${l.ctx.file}` : '')
@@ -223,7 +248,8 @@ const Diag = (() => {
       lines.push('  (none captured on this page)');
     }
     entries.forEach((e, i) => {
-      lines.push(`  ${i + 1}. [${e.at}] ${e.kind}${e.action ? ' action=' + e.action : ''}`);
+      lines.push(`  ${i + 1}. [${e.at}] ${e.kind}${e.action ? ' action=' + e.action : ''}${
+        e.count > 1 ? ` (x${e.count})` : ''}`);
       lines.push(`     ${e.message}`);
       if (e.status) lines.push(`     status=${e.status}${e.code ? ' code=' + e.code : ''}`);
       if (e.file)   lines.push(`     at ${e.file}:${e.line || '?'}:${e.column || '?'}`);
@@ -346,12 +372,12 @@ const Diag = (() => {
 
     paint();
 
-    /*
-     * Push the browser-side history to the server once per page load. Errors
-     * from a page that then went blank are only recoverable if they left the
-     * browser, and this must never delay or block rendering.
-     */
-    if (entries.length) {
+/*
+   * Push the browser-side history to the server once per page load. Errors
+   * from a page that then went blank are only recoverable if they left the
+   * browser, and this must never delay or block rendering.
+   */
+    if (entries.length && !submitDisabled) {
       const payload = entries.slice(-30);
       const base = document.body?.dataset.apiBase || 'api/index.php';
       if (document.body?.dataset.csrf) {
@@ -363,7 +389,32 @@ const Diag = (() => {
             'X-CSRF-Token': document.body.dataset.csrf,
           },
           body: JSON.stringify({ entries: payload }),
-        }).catch(() => { /* not signed in, or API down: the local copy still works */ });
+        })
+          .then((res) => {
+            if (!res || !res.ok) throw new Error(`HTTP ${res && res.status}`);
+            submitFails = 0;
+
+            // Drain what was actually accepted. Without this the queue is never
+            // emptied, so every subsequent page load re-posts the same entries
+            // and the server log fills with duplicates until the interesting
+            // early errors have rotated out -- which is exactly what happened.
+            // Entries pushed while the request was in flight are kept: they
+            // have not been sent yet.
+            const sentKeys = new Set(payload.map((e) => `${e.at}|${e.message}`));
+            entries = entries.filter((e) => !sentKeys.has(`${e.at}|${e.message}`));
+            seen = Math.max(0, seen - payload.length);
+            persist();
+            paint();
+          })
+          .catch(() => {
+            // Not signed in, CSRF stale, or the API is down. Retry a couple of
+            // times on later loads, then give up: a broken reporting channel
+            // must not keep re-posting on every navigation.
+            submitFails += 1;
+            if (submitFails >= 3) {
+              submitDisabled = true;
+            }
+          });
       }
     }
   }

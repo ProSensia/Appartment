@@ -87,7 +87,18 @@ def load_columns():
     return tables
 
 
+def load_views():
+    """View names, so a query against one is not reported as a missing table."""
+    if not SCHEMA.exists():
+        return set()
+    text = SCHEMA.read_text(encoding="utf-8")
+    return {m.lower() for m in re.findall(
+        r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:ALGORITHM[^=]*\s+)?(?:DEFINER[^=]*\s+)?"
+        r"(?:SQL\s+SECURITY\s+\w+\s+)?VIEW\s+`?(\w+)`?", text, re.I)}
+
+
 TABLES = load_columns()
+VIEWS = load_views()
 
 
 # --------------------------------------------------------------------------
@@ -138,12 +149,70 @@ def alias_map(sql):
 
 COLUMN_REF = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\.\s*`?([a-zA-Z_][a-zA-Z0-9_]*)`?")
 
+# Tables named by a query. A table that does not exist is fatal 1146, and the
+# column check above cannot see it when nothing is selected -- `SELECT COUNT(*)
+# FROM notices` names no columns at all. The diagnostics self-check carried exactly
+# that: a `notices` query for a table the schema has always called
+# `announcements`, which reported one bold red failure and hid the twelve checks
+# that were fine.
+TABLE_REF = re.compile(
+    r"(?<![:\w])(?:FROM|JOIN|INTO)\s+`?([a-zA-Z_][a-zA-Z0-9_]*)`?", re.I
+)
+# UPDATE only counts when it opens the statement. Mid-string it is MySQL's
+# `ON DUPLICATE KEY UPDATE assigned_user_id = ...`, which names a column.
+UPDATE_REF = re.compile(r"^\s*UPDATE\s+`?([a-zA-Z_][a-zA-Z0-9_]*)`?", re.I)
+
+# Read from an information_schema query, or interpolated into a quoted identifier.
+# Either way the table is not a literal and cannot be checked here.
+NOT_A_TABLE = {
+    "select", "insert", "update", "delete", "from", "where", "values", "set",
+    "dual", "information_schema", "and", "or", "not", "on", "using", "key",
+    "duplicate", "table", "index", "unique", "primary", "order", "group", "by",
+    "having", "limit", "offset", "union", "all", "as", "into", "exists", "in",
+}
+
+
+SQL_VERB = re.compile(r"\b(?:SELECT|INSERT|UPDATE|DELETE|REPLACE)\b", re.I)
+
+
+def check_tables(body, where):
+    """Every literal table named by the query must exist in sql/schema.sql."""
+    sql = strip_comments(body)
+    # Require a real statement verb first. The SQL-literal gate is deliberately
+    # permissive (a fragment like " AND x >= :from" needs checking too), but that
+    # also admits ordinary English -- 'Clear personal items from the shared
+    # fridge' contains "from the", and was reported as a missing table.
+    if not SQL_VERB.search(sql):
+        return []
+
+    problems = []
+    seen = set()
+    refs = [m.group(1) for m in TABLE_REF.finditer(sql)]
+    refs += [m.group(1) for m in UPDATE_REF.finditer(sql)]
+    for name in refs:
+        table = name.lower()
+        if table in NOT_A_TABLE or "$" in name:
+            continue
+        if table in TABLES or table in VIEWS or table in seen:
+            continue
+        seen.add(table)
+        problems.append(f"{where}  table `{table}` does not exist "
+                        f"({_closest(table)})")
+    return problems
+
+
+def _closest(name):
+    """A likely intended name, so the finding is actionable rather than just true."""
+    import difflib
+    matches = difflib.get_close_matches(name, list(TABLES), n=1, cutoff=0.6)
+    return f"did you mean `{matches[0]}`?" if matches else "no similar table in schema.sql"
+
 
 def check_sql(body, where):
     """Return list of findings for one SQL literal."""
     sql = strip_comments(body)
     aliases = alias_map(sql)
-    problems = []
+    problems = check_tables(body, where)
 
     for m in COLUMN_REF.finditer(sql):
         alias, col = m.group(1).lower(), m.group(2).lower()
@@ -185,6 +254,45 @@ def check_writes(text, where):
     return problems
 
 
+def strip_php_comments(text):
+    """Blank PHP comments, preserving offsets so line numbers stay right.
+
+    Needed because SQL is found by scanning quoted strings: a docblock that
+    contains both an apostrophe and the word FROM looks exactly like a query,
+    and one was reported as `table 'the' does not exist`.
+    """
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        two = text[i:i + 2]
+        if two == "/*":
+            j = text.find("*/", i)
+            j = n if j == -1 else j + 2
+            out.append("".join("\n" if c == "\n" else " " for c in text[i:j]))
+            i = j
+        elif two == "//" or text[i] == "#":
+            j = text.find("\n", i)
+            j = n if j == -1 else j
+            out.append(" " * (j - i))
+            i = j
+        elif text[i] in "'\"":
+            quote = text[i]
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == quote:
+                    break
+                j += 1
+            out.append(text[i:min(j + 1, n)])
+            i = j + 1
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
 def main():
     findings = []
     scanned = 0
@@ -196,19 +304,21 @@ def main():
         for path in sorted(base.rglob("*.php")):
             scanned += 1
             rel = path.relative_to(ROOT).as_posix()
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = strip_php_comments(
+                path.read_text(encoding="utf-8", errors="replace"))
             for line, body in sql_literals(text):
                 findings += check_sql(body, f"{rel}:{line}")
             findings += check_writes(text, rel)
 
-    print(f"schema tables : {len(TABLES)}")
+    print(f"schema tables : {len(TABLES)} (+{len(VIEWS)} views)")
     print(f"scanned       : {scanned} PHP files")
 
     if not findings:
-        print("OK - every SQL column reference resolves against sql/schema.sql")
+        print("OK - every SQL table and column reference resolves "
+              "against sql/schema.sql")
         return 0
 
-    print(f"\n{len(findings)} unknown column reference(s):\n")
+    print(f"\n{len(findings)} unknown table/column reference(s):\n")
     for f in findings:
         print(f"  {f}")
     return 1

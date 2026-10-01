@@ -60,9 +60,132 @@ final class Database
     /** SELECT helper. */
     public static function query(string $sql, array $params = []): PDOStatement
     {
+        self::assertBindingsMatch($sql, $params);
+
         $stmt = self::conn()->prepare($sql);
         $stmt->execute($params);
         return $stmt;
+    }
+
+    /**
+     * Fail loudly, and usefully, on the two binding mistakes PDO reports as the
+     * same opaque `SQLSTATE[HY093]: Invalid parameter number`:
+     *
+     *   - a placeholder in the SQL with nothing bound to it, and
+     *   - a bound name the SQL never declares.
+     *
+     * HY093 arrives without saying which statement failed. That is why a real
+     * one of these went undiagnosed for so long: the log said only
+     * "Database.php:64", the stack trace was not captured, and the failing query
+     * was in a helper the page used indirectly. Every caller goes through here,
+     * so checking once turns a mystery into a message naming the statement.
+     *
+     * Repeated placeholders are caught too -- PDO cannot reuse a named marker
+     * with emulation off, but reports it as HY093 just the same.
+     *
+     * Strings and comments are stripped first, so a `:name` inside a quoted
+     * literal is not mistaken for a marker.
+     */
+    private static function assertBindingsMatch(string $sql, array $params): void
+    {
+        // Cheap bail-out: no parameters at all is the overwhelmingly common case
+        // for schema/config queries and needs no parsing.
+        if ($params === []) {
+            return;
+        }
+
+        // Strings and comments are stripped first, so a `:name` inside a quoted
+        // literal is not mistaken for a marker.
+        $clean = preg_replace(
+            ["/'(?:[^'\\\\]|\\\\.)*'/", '/"(?:[^"\\\\]|\\\\.)*"/',
+             '/--[^\n]*/', '#/\*.*?\*/#s'],
+            ' ',
+            $sql
+        ) ?? $sql;
+
+        $positional = substr_count($clean, '?');
+
+        // Positional mode: `WHERE id IN (?,?,?)` bound to a plain list. Counted
+        // rather than name-matched, and deliberately separate from the named
+        // branch -- PDO treats an array with integer keys as positional, so a
+        // list bound to named markers (or the reverse) is the mistake to catch.
+        if ($positional > 0) {
+            $named = preg_match_all('/:([a-zA-Z_][a-zA-Z0-9_]*)/', $clean, $nm);
+            if ($named > 0) {
+                throw new RuntimeException(sprintf(
+                    'PDO binding mismatch: the statement has both %d positional '
+                    . '? marker(s) and named placeholder(s) (%s), which cannot be '
+                    . 'bound in one call. SQL: %s',
+                    $positional,
+                    implode(', ', array_unique($nm[1])),
+                    self::forMessage($sql)
+                ));
+            }
+            if (count($params) !== $positional) {
+                throw new RuntimeException(sprintf(
+                    'PDO binding mismatch: %d positional ? marker(s) but %d '
+                    . 'value(s) bound. SQL: %s',
+                    $positional,
+                    count($params),
+                    self::forMessage($sql)
+                ));
+            }
+            return;
+        }
+
+        if (preg_match_all('/:([a-zA-Z_][a-zA-Z0-9_]*)/', $clean, $m) === 0) {
+            throw new RuntimeException(sprintf(
+                'PDO binding mismatch: %d value(s) bound (%s) but the query '
+                . 'declares no placeholders. SQL: %s',
+                count($params),
+                implode(', ', array_keys($params)),
+                self::forMessage($sql)
+            ));
+        }
+
+        $declared  = $m[1];
+        $unbound   = array_values(array_unique(array_diff($declared, array_keys($params))));
+        $unused    = array_values(array_diff(array_keys($params), array_unique($declared)));
+        $repeated  = array_values(array_unique(array_diff_assoc(
+            $declared,
+            array_unique($declared)
+        )));
+
+        if ($unbound === [] && $unused === [] && $repeated === []) {
+            return;
+        }
+
+        $parts = [];
+        if ($repeated !== []) {
+            // The trap: PDO emits one positional marker per occurrence, so
+            // binding the name once leaves the extras unfilled.
+            $parts[] = 'repeated placeholder(s): ' . implode(', ', array_map(
+                static fn(string $n): string => ':' . $n,
+                $repeated
+            )) . ' -- use :name1, :name2 instead';
+        }
+        if ($unbound !== []) {
+            $parts[] = 'declared but not bound: ' . implode(', ', array_map(
+                static fn(string $n): string => ':' . $n,
+                $unbound
+            ));
+        }
+        if ($unused !== []) {
+            $parts[] = 'bound but not declared: ' . implode(', ', $unused);
+        }
+
+        throw new RuntimeException(sprintf(
+            'PDO binding mismatch (%s). SQL: %s',
+            implode('; ', $parts),
+            self::forMessage($sql)
+        ));
+    }
+
+    /** One-line, length-capped SQL for an exception message or the log. */
+    private static function forMessage(string $sql): string
+    {
+        $flat = trim(preg_replace('/\s+/', ' ', $sql) ?? $sql);
+        return strlen($flat) > 300 ? substr($flat, 0, 297) . '...' : $flat;
     }
 
     /** First row or null. */

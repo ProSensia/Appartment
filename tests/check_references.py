@@ -62,6 +62,9 @@ mkdir rmdir sys_get_temp_dir tempnam ini_get ini_set
 extension_loaded get_loaded_extensions php_sapi_name php_uname
 debug_backtrace debug_print_backtrace
 preg_match_all preg_last_error
+substr_count array_diff_assoc array_diff array_intersect
+flock fread fseek ftruncate fwrite strrpos str_ends_with str_starts_with
+filesize file_put_contents rename unlink
 array_key_first intdiv str_word_count
 """.split())
 
