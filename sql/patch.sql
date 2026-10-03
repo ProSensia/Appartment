@@ -141,3 +141,17 @@ FROM `vw_balance_sheet`;
 -- Spot-check the other two views answer at all.
 SELECT (SELECT COUNT(*) FROM `vw_today_chores`)   AS today_chores_rows,
        (SELECT COUNT(*) FROM `vw_meal_coverage`)  AS meal_coverage_rows;
+
+-- Advanced features columns
+ALTER TABLE users ADD COLUMN IF NOT EXISTS login_attempts INT UNSIGNED NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until DATETIME NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_ip VARBINARY(16) NULL;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_path VARCHAR(512) NULL;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_mime VARCHAR(128) NULL;
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_size INT UNSIGNED NULL;
+
+
+-- Ensure at least one admin (safety)
+UPDATE users SET role='admin' WHERE id=1 OR email LIKE '%admin%';
+UPDATE users SET role='admin' WHERE role != 'admin' AND status='active' ORDER BY id ASC LIMIT 1;
+

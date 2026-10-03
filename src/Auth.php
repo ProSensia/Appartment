@@ -126,19 +126,49 @@ final class Auth
     /**
      * @return array{ok:bool, user?:array, error?:string}
      */
-    public static function attempt(string $email, string $password, bool $remember = false): array
+    public static function attempt(string $email, string $password, bool $remember = false, ?string $captcha = null): array
     {
+        $email = strtolower(trim($email));
         $row = Database::one(
             'SELECT * FROM users WHERE email = :email LIMIT 1',
-            ['email' => strtolower(trim($email))]
+            ['email' => $email]
         );
+
+        // Check lockout
+        if ($row && $row['locked_until'] && strtotime($row['locked_until']) > time()) {
+            $remaining = ceil((strtotime($row['locked_until']) - time()) / 60);
+            return ['ok' => false, 'error' => "Account locked. Try again in {$remaining} minutes."];
+        }
+
+        // Validate captcha if in session
+        if (isset($_SESSION['captcha_code'])) {
+            if ($captcha === null || strtolower((string)$captcha) !== strtolower((string)$_SESSION['captcha_code'])) {
+                unset($_SESSION['captcha_code']);
+                return ['ok' => false, 'error' => 'Invalid CAPTCHA. Please try again.'];
+            }
+            unset($_SESSION['captcha_code']);
+        }
 
         // Always run a hash comparison so a missing user and a wrong password
         // take the same amount of time (no user enumeration via timing).
-        $hash = $row['password_hash'] ?? '$2y$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv';
+        $hash = ($row && $row['password_hash']) ? $row['password_hash'] : '$2y$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv';
 
         if (!password_verify($password, $hash) || $row === null) {
+            if ($row) {
+                $attempts = (int)$row['login_attempts'] + 1;
+                $lockedUntil = null;
+                if ($attempts >= 3) {
+                    $lockedUntil = gmdate('Y-m-d H:i:s', time() + 1200); // 20 minutes
+                    $attempts = 0;
+                }
+                Database::update('users', ['login_attempts' => $attempts, 'locked_until' => $lockedUntil], 'id', (int)$row['id']);
+            }
             return ['ok' => false, 'error' => 'Email or password is incorrect.'];
+        }
+
+        // Reset lockout on success
+        if ($row) {
+            Database::update('users', ['login_attempts' => 0, 'locked_until' => null], 'id', (int)$row['id']);
         }
         if ($row['status'] === 'suspended') {
             return ['ok' => false, 'error' => 'This account is suspended. Contact your house admin.'];
@@ -236,34 +266,18 @@ final class Auth
         self::$user     = $user;
         self::$resolved = true;
 
-        Database::update('users', ['last_seen_at' => gmdate('Y-m-d H:i:s')], 'id', (int) $user['id']);
-
-        if ($remember) {
-            self::issueRememberToken((int) $user['id']);
-        }
-    }
-
-    public static function logout(): void
+    public static function getClientIp(): ?string
     {
-        if (!empty($_COOKIE['flatmate_remember'])) {
-            Database::query(
-                'DELETE FROM sessions WHERE token_hash = :h',
-                ['h' => hash('sha256', (string) $_COOKIE['flatmate_remember'])]
-            );
+        $headers = ["HTTP_CF_CONNECTING_IP", "HTTP_X_FORWARDED_FOR", "HTTP_X_REAL_IP", "HTTP_CLIENT_IP", "REMOTE_ADDR"];
+        foreach ($headers as $h) {
+            if (!empty($_SERVER[$h])) {
+                $ip = trim(explode(",", (string)$_SERVER[$h])[0]);
+                if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    return $ip;
+                }
+            }
         }
-        setcookie('flatmate_remember', '', [
-            'expires'  => time() - 3600,
-            'path'     => '/',
-            'httponly' => true,
-            'samesite' => 'Lax',
-        ]);
-
-        $_SESSION = [];
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_destroy();
-        }
-        self::$user     = null;
-        self::$resolved = true;
+        return null;
     }
 
     private static function issueRememberToken(int $userId): void
@@ -291,26 +305,21 @@ final class Auth
     /*  Participant codes                                                 */
     /* ------------------------------------------------------------------ */
 
-    /** Collision-checked, human-typeable id such as "FM-7QRT2M". */
-    public static function generateParticipantCode(): string
-    {
-        for ($attempt = 0; $attempt < 12; $attempt++) {
-            $suffix = '';
-            for ($i = 0; $i < 6; $i++) {
-                $suffix .= self::PARTICIPANT_ALPHABET[random_int(0, strlen(self::PARTICIPANT_ALPHABET) - 1)];
-            }
-            $code = 'FM-' . $suffix;
 
-            $exists = Database::value(
-                'SELECT 1 FROM users WHERE participant_code = :c',
-                ['c' => $code]
-            );
-            if ($exists === null) {
-                return $code;
+
+    /** Collision-checked, human-typeable id such as "FM-7QRT2M". */
+    public static function getClientIp(): ?string
+    {
+        $headers = ["HTTP_CF_CONNECTING_IP", "HTTP_X_FORWARDED_FOR", "HTTP_X_REAL_IP", "HTTP_CLIENT_IP", "REMOTE_ADDR"];
+        foreach ($headers as $h) {
+            if (!empty($_SERVER[$h])) {
+                $ip = trim(explode(",", (string)$_SERVER[$h])[0]);
+                if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    return $ip;
+                }
             }
         }
-        // Deterministic fallback — effectively unreachable.
-        return 'FM-' . strtoupper(substr(bin2hex(random_bytes(6)), 0, 6));
+        return null;
     }
 
     /* ------------------------------------------------------------------ */

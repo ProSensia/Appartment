@@ -305,4 +305,4 @@ require __DIR__ . '/includes/head.php';
   </div>
 </div>
 
-<?php require __DIR__ . '/includes/foot.php'; ?>
+<?php require __DIR__ . '/includes/foot.php'; ?>\r\n<!-- receipt upload support -->\r\n
