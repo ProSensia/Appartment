@@ -108,8 +108,8 @@ final class MealService
         foreach (Database::all(
             'SELECT mp.meal_id, mp.status FROM meal_participants mp
                JOIN meals m ON m.id = mp.meal_id
-              WHERE m.meal_plan_id = :p AND mp.user_id = :u',
-            ['p' => $plan['id'], 'u' => $viewerId]
+              WHERE m.meal_plan_id = :p AND mp.user_id = :u1',
+            ['p' => $plan['id'], 'u1' => $viewerId]
         ) as $r) {
             $mine[(int) $r['meal_id']] = $r['status'];
         }
@@ -140,8 +140,8 @@ final class MealService
             'SELECT v.suggestion_id, v.vote FROM suggestion_votes v
                JOIN meal_suggestions s ON s.id = v.suggestion_id
                JOIN meals m ON m.id = s.meal_id
-              WHERE m.meal_plan_id = :p AND v.user_id = :u',
-            ['p' => $plan['id'], 'u' => $viewerId]
+              WHERE m.meal_plan_id = :p AND v.user_id = :u1',
+            ['p' => $plan['id'], 'u1' => $viewerId]
         ) as $v) {
             $myVotes[(int) $v['suggestion_id']] = (int) $v['vote'];
         }
@@ -322,8 +322,8 @@ final class MealService
         // Nudge the rest of the flat to vote.
         foreach (array_column(
             Database::all(
-                "SELECT id FROM users WHERE apartment_id = :a AND status = 'active' AND id <> :u",
-                ['a' => (int) $meal['apartment_id'], 'u' => $actorId]
+                "SELECT id FROM users WHERE apartment_id = :a AND status = 'active' AND id <> :u1",
+                ['a' => (int) $meal['apartment_id'], 'u1' => $actorId]
             ),
             'id'
         ) as $uid) {
@@ -357,8 +357,8 @@ final class MealService
         }
 
         $current = Database::value(
-            'SELECT vote FROM suggestion_votes WHERE suggestion_id = :s AND user_id = :u',
-            ['s' => $suggestionId, 'u' => $actorId]
+            'SELECT vote FROM suggestion_votes WHERE suggestion_id = :s AND user_id = :u1',
+            ['s' => $suggestionId, 'u1' => $actorId]
         );
 
         if ($current === null) {
@@ -370,14 +370,14 @@ final class MealService
         } elseif ((int) $current === $vote) {
             // Same value again = retract the vote.
             Database::query(
-                'DELETE FROM suggestion_votes WHERE suggestion_id = :s AND user_id = :u',
-                ['s' => $suggestionId, 'u' => $actorId]
+                'DELETE FROM suggestion_votes WHERE suggestion_id = :s AND user_id = :u1',
+                ['s' => $suggestionId, 'u1' => $actorId]
             );
         } else {
             Database::query(
                 'UPDATE suggestion_votes SET vote = :v
-                  WHERE suggestion_id = :s AND user_id = :u',
-                ['v' => $vote, 's' => $suggestionId, 'u' => $actorId]
+                  WHERE suggestion_id = :s AND user_id = :u1',
+                ['v' => $vote, 's' => $suggestionId, 'u1' => $actorId]
             );
         }
 
@@ -387,8 +387,8 @@ final class MealService
     public static function assignCook(int $mealId, int $userId): array
     {
         $ok = Database::value(
-            "SELECT 1 FROM users WHERE id = :u AND status = 'active'",
-            ['u' => $userId]
+            "SELECT 1 FROM users WHERE id = :u1 AND status = 'active'",
+            ['u1' => $userId]
         );
         if ($ok === null) {
             throw new RuntimeException('That person is not an active resident.');
@@ -414,8 +414,8 @@ final class MealService
             throw new ValidationException(['status' => 'Status must be "eating" or "opting_out".']);
         }
         $ok = Database::value(
-            "SELECT 1 FROM users WHERE id = :u AND status = 'active'",
-            ['u' => $userId]
+            "SELECT 1 FROM users WHERE id = :u1 AND status = 'active'",
+            ['u1' => $userId]
         );
         if ($ok === null) {
             throw new RuntimeException('Only active residents can be marked for a meal.');
@@ -423,9 +423,9 @@ final class MealService
 
         Database::query(
             'INSERT INTO meal_participants (meal_id, user_id, status, responded_at)
-                  VALUES (:m, :u, :s, UTC_TIMESTAMP())
+                  VALUES (:m, :u1, :s, UTC_TIMESTAMP())
              ON DUPLICATE KEY UPDATE status = :s2, responded_at = UTC_TIMESTAMP()',
-            ['m' => $mealId, 'u' => $userId, 's' => $status, 's2' => $status]
+            ['m' => $mealId, 'u1' => $userId, 's' => $status, 's2' => $status]
         );
 
         return self::slot($mealId, $userId);
@@ -450,9 +450,9 @@ final class MealService
         foreach ($meals as $m) {
             Database::query(
                 'INSERT INTO meal_participants (meal_id, user_id, status, responded_at)
-                      VALUES (:m, :u, :s, UTC_TIMESTAMP())
+                      VALUES (:m, :u1, :s, UTC_TIMESTAMP())
                  ON DUPLICATE KEY UPDATE status = :s2, responded_at = UTC_TIMESTAMP()',
-                ['m' => $m['id'], 'u' => $userId, 's' => $status, 's2' => $status]
+                ['m' => $m['id'], 'u1' => $userId, 's' => $status, 's2' => $status]
             );
         }
         return count($meals);

@@ -199,10 +199,10 @@ final class BalanceEngine
                     c.name AS category, c.icon AS category_icon
                FROM expenses e
                LEFT JOIN expense_categories c ON c.id = e.category_id
-              WHERE e.apartment_id = :a AND e.paid_by_user_id = :u AND e.is_deleted = 0
+              WHERE e.apartment_id = :a AND e.paid_by_user_id = :u1 AND e.is_deleted = 0
               ORDER BY e.expense_date DESC, e.id DESC
               LIMIT 50',
-            ['a' => $apartmentId, 'u' => $userId]
+            ['a' => $apartmentId, 'u1' => $userId]
         );
 
         $owed = Database::all(
@@ -214,10 +214,10 @@ final class BalanceEngine
                JOIN expenses e ON e.id = es.expense_id AND e.is_deleted = 0
                LEFT JOIN expense_categories c ON c.id = e.category_id
                LEFT JOIN users p ON p.id = e.paid_by_user_id
-              WHERE e.apartment_id = :a AND es.user_id = :u
+              WHERE e.apartment_id = :a AND es.user_id = :u1
               ORDER BY e.expense_date DESC, e.id DESC
               LIMIT 50',
-            ['a' => $apartmentId, 'u' => $userId]
+            ['a' => $apartmentId, 'u1' => $userId]
         );
 
         $settlements = Database::all(
@@ -226,10 +226,10 @@ final class BalanceEngine
                FROM settlements s
                JOIN users f ON f.id = s.from_user_id
                JOIN users t ON t.id = s.to_user_id
-              WHERE s.apartment_id = :a AND (s.from_user_id = :u OR s.to_user_id = :u)
+              WHERE s.apartment_id = :a AND (s.from_user_id = :u1 OR s.to_user_id = :u2)
               ORDER BY s.settled_at DESC, s.id DESC
               LIMIT 50',
-            ['a' => $apartmentId, 'u' => $userId]
+            ['a' => $apartmentId, 'u1' => $userId, 'u2' => $userId]
         );
 
         return [

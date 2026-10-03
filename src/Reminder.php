@@ -44,11 +44,11 @@ final class Reminder
         $rows = Database::all(
             'SELECT * FROM reminders
               WHERE apartment_id = :a
-                AND (user_id = :u OR user_id IS NULL)
+                AND (user_id = :u1 OR user_id IS NULL)
                 AND (read_at IS NULL OR read_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 7 DAY))
               ORDER BY (read_at IS NOT NULL), due_at IS NULL, due_at, created_at DESC
               LIMIT :lim',
-            ['a' => $apartmentId, 'u' => $userId, 'lim' => max(1, min(100, $limit))]
+            ['a' => $apartmentId, 'u1' => $userId, 'lim' => max(1, min(100, $limit))]
         );
 
         return array_map(static function (array $r): array {
@@ -64,8 +64,8 @@ final class Reminder
     {
         return (int) Database::value(
             'SELECT COUNT(*) FROM reminders
-              WHERE apartment_id = :a AND (user_id = :u OR user_id IS NULL) AND read_at IS NULL',
-            ['a' => $apartmentId, 'u' => $userId]
+              WHERE apartment_id = :a AND (user_id = :u1 OR user_id IS NULL) AND read_at IS NULL',
+            ['a' => $apartmentId, 'u1' => $userId]
         );
     }
 
@@ -78,8 +78,8 @@ final class Reminder
     {
         return Database::query(
             'UPDATE reminders SET read_at = UTC_TIMESTAMP()
-              WHERE apartment_id = :a AND (user_id = :u OR user_id IS NULL) AND read_at IS NULL',
-            ['a' => $apartmentId, 'u' => $userId]
+              WHERE apartment_id = :a AND (user_id = :u1 OR user_id IS NULL) AND read_at IS NULL',
+            ['a' => $apartmentId, 'u1' => $userId]
         )->rowCount();
     }
 

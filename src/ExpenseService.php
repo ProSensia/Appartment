@@ -349,8 +349,8 @@ final class ExpenseService
                 'UPDATE expense_splits es
                    JOIN expenses e ON e.id = es.expense_id
                   SET es.is_settled = 1, es.settled_at = UTC_TIMESTAMP()
-                WHERE es.user_id = :u AND e.apartment_id = :a AND e.is_deleted = 0 AND es.is_settled = 0',
-                ['u' => $from, 'a' => $apartmentId]
+                WHERE es.user_id = :u1 AND e.apartment_id = :a AND e.is_deleted = 0 AND es.is_settled = 0',
+                ['u1' => $from, 'a' => $apartmentId]
             );
         }
 
@@ -393,8 +393,8 @@ final class ExpenseService
             throw new RuntimeException('That expense no longer exists.');
         }
         $isParty = Database::value(
-            'SELECT 1 FROM expense_splits WHERE expense_id = :e AND user_id = :u',
-            ['e' => $expenseId, 'u' => $actorId]
+            'SELECT 1 FROM expense_splits WHERE expense_id = :e AND user_id = :u1',
+            ['e' => $expenseId, 'u1' => $actorId]
         ) !== null;
 
         if (!$isAdmin && !$isParty) {
@@ -411,8 +411,8 @@ final class ExpenseService
         if ($note !== null) {
             $apartmentId = (int) $expense['apartment_id'];
             foreach (array_column(
-                Database::all("SELECT id FROM users WHERE apartment_id = :a AND role = 'admin' AND id <> :u",
-                    ['a' => $apartmentId, 'u' => $actorId]),
+                Database::all("SELECT id FROM users WHERE apartment_id = :a AND role = 'admin' AND id <> :u1",
+                    ['a' => $apartmentId, 'u1' => $actorId]),
                 'id'
             ) as $adminId) {
                 Reminder::push($apartmentId, (int) $adminId, 'balance',

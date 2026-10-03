@@ -325,8 +325,8 @@ final class DutyScheduler
         $params = ['a' => $apartmentId, 'from' => $from, 'to' => $to];
 
         if ($userId !== null) {
-            $sql .= ' AND t.assigned_user_id = :u';
-            $params['u'] = $userId;
+            $sql .= ' AND t.assigned_user_id = :u1';
+            $params['u1'] = $userId;
         }
         $sql .= ' ORDER BY t.task_date, FIELD(t.status,"pending","done","verified","skipped"), a.name';
 
@@ -618,8 +618,8 @@ final class DutyScheduler
     public static function reassign(int $taskId, int $newUserId): array
     {
         $ok = Database::value(
-            "SELECT 1 FROM users WHERE id = :u AND status = 'active'",
-            ['u' => $newUserId]
+            "SELECT 1 FROM users WHERE id = :u1 AND status = 'active'",
+            ['u1' => $newUserId]
         );
         if ($ok === null) {
             throw new RuntimeException('That person is not an active resident.');

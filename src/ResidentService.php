@@ -50,15 +50,15 @@ final class ResidentService
             $u['chores_pending']  = (int) Database::value(
                 "SELECT COUNT(*) FROM chore_tasks t
                    JOIN chore_areas ca ON ca.id = t.chore_area_id
-                  WHERE t.assigned_user_id = :u AND ca.apartment_id = :a
+                  WHERE t.assigned_user_id = :u1 AND ca.apartment_id = :a
                     AND t.status = 'pending' AND t.task_date <= CURDATE()",
-                ['u' => $uid, 'a' => (int) $u['apartment_id']]
+                ['u1' => $uid, 'a' => (int) $u['apartment_id']]
             );
             $u['chores_total']    = (int) Database::value(
                 'SELECT COUNT(*) FROM chore_tasks t
                    JOIN chore_areas ca ON ca.id = t.chore_area_id
-                  WHERE t.assigned_user_id = :u AND ca.apartment_id = :a',
-                ['u' => $uid, 'a' => (int) $u['apartment_id']]
+                  WHERE t.assigned_user_id = :u1 AND ca.apartment_id = :a',
+                ['u1' => $uid, 'a' => (int) $u['apartment_id']]
             );
             $u['offboarding']     = self::offboardingProgress($uid);
             $u['initials']        = self::initials((string) $u['full_name']);
@@ -74,8 +74,8 @@ final class ResidentService
                FROM users u
                LEFT JOIN rooms r       ON r.id = u.room_id
                LEFT JOIN duty_groups g ON g.id = u.duty_group_id
-              WHERE u.apartment_id = :a AND u.id = :u',
-            ['a' => $apartmentId, 'u' => $userId]
+               WHERE u.apartment_id = :a AND u.id = :u1',
+            ['a' => $apartmentId, 'u1' => $userId]
         );
         if ($u === null) {
             return [];
@@ -340,8 +340,8 @@ public static function invites(int $apartmentId): array
     public static function update(int $apartmentId, int $targetId, int $actorId, array $input): array
     {
         $user = Database::one(
-            'SELECT * FROM users WHERE id = :u AND apartment_id = :a',
-            ['u' => $targetId, 'a' => $apartmentId]
+            'SELECT * FROM users WHERE id = :u1 AND apartment_id = :a',
+            ['u1' => $targetId, 'a' => $apartmentId]
         );
         if ($user === null) {
             throw new RuntimeException('That resident is not in this apartment.');
@@ -434,8 +434,8 @@ public static function invites(int $apartmentId): array
     public static function beginOffboarding(int $apartmentId, int $userId, int $actorId): array
     {
         $user = Database::one(
-            'SELECT * FROM users WHERE id = :u AND apartment_id = :a',
-            ['u' => $userId, 'a' => $apartmentId]
+            'SELECT * FROM users WHERE id = :u1 AND apartment_id = :a',
+            ['u1' => $userId, 'a' => $apartmentId]
         );
         if ($user === null) {
             throw new RuntimeException('That resident is not in this apartment.');
@@ -445,8 +445,8 @@ public static function invites(int $apartmentId): array
         }
 
         $exists = Database::value(
-            'SELECT 1 FROM offboarding_tasks WHERE user_id = :u',
-            ['u' => $userId]
+            'SELECT 1 FROM offboarding_tasks WHERE user_id = :u1',
+            ['u1' => $userId]
         );
         if ($exists === null) {
             self::defaultChecklist($apartmentId, $userId);
@@ -462,16 +462,16 @@ public static function invites(int $apartmentId): array
     {
         $user = Database::one(
             'SELECT id, full_name, participant_code, avatar_color, status, room_id
-               FROM users WHERE id = :u AND apartment_id = :a',
-            ['u' => $userId, 'a' => $apartmentId]
+               FROM users WHERE id = :u1 AND apartment_id = :a',
+            ['u1' => $userId, 'a' => $apartmentId]
         );
         if ($user === null) {
             return [];
         }
 
         $items = Database::all(
-            'SELECT * FROM offboarding_tasks WHERE user_id = :u ORDER BY sort_order, id',
-            ['u' => $userId]
+            'SELECT * FROM offboarding_tasks WHERE user_id = :u1 ORDER BY sort_order, id',
+            ['u1' => $userId]
         );
 
         $balance = 0;
@@ -560,8 +560,8 @@ public static function invites(int $apartmentId): array
 
         $admins = (int) Database::value(
             "SELECT COUNT(*) FROM users
-              WHERE apartment_id = :a AND role = 'admin' AND status = 'active' AND id <> :u",
-            ['a' => $apartmentId, 'u' => $userId]
+              WHERE apartment_id = :a AND role = 'admin' AND status = 'active' AND id <> :u1",
+            ['a' => $apartmentId, 'u1' => $userId]
         );
         if ($admins === 0) {
             throw new ValidationException(['user' => 'This is the only admin. Promote a new one before removing them.']);
@@ -595,15 +595,15 @@ public static function invites(int $apartmentId): array
             // Close anything still assigned to them and hand it back to the pool.
             Database::query(
                 "UPDATE chore_tasks SET assigned_user_id = NULL
-                  WHERE assigned_user_id = :u AND status = 'pending' AND task_date >= CURDATE()",
-                ['u' => $userId]
+                  WHERE assigned_user_id = :u1 AND status = 'pending' AND task_date >= CURDATE()",
+                ['u1' => $userId]
             );
             Database::query(
-                'DELETE FROM sessions WHERE user_id = :u', ['u' => $userId]
+                'DELETE FROM sessions WHERE user_id = :u1', ['u1' => $userId]
             );
             Database::query(
-                "UPDATE magic_links SET used_at = UTC_TIMESTAMP() WHERE user_id = :u AND used_at IS NULL",
-                ['u' => $userId]
+                "UPDATE magic_links SET used_at = UTC_TIMESTAMP() WHERE user_id = :u1 AND used_at IS NULL",
+                ['u1' => $userId]
             );
 
             DutyScheduler::rebuildAll($apartmentId);
@@ -616,8 +616,8 @@ public static function invites(int $apartmentId): array
 
             foreach (array_column(
                 Database::all(
-                    "SELECT id FROM users WHERE apartment_id = :a AND role = 'admin' AND id <> :u",
-                    ['a' => $apartmentId, 'u' => $userId]
+                    "SELECT id FROM users WHERE apartment_id = :a AND role = 'admin' AND id <> :u1",
+                    ['a' => $apartmentId, 'u1' => $userId]
                 ),
                 'id'
             ) as $adminId) {
@@ -642,7 +642,7 @@ public static function invites(int $apartmentId): array
                 'duty_group_id' => $groupId,
             ], 'id', $userId);
 
-            Database::query('DELETE FROM offboarding_tasks WHERE user_id = :u', ['u' => $userId]);
+            Database::query('DELETE FROM offboarding_tasks WHERE user_id = :u1', ['u1' => $userId]);
             DutyScheduler::rebuildAll($apartmentId);
             ActivityLog::record('resident.reinstated', 'user', $userId);
 
@@ -660,8 +660,8 @@ public static function invites(int $apartmentId): array
             'SELECT COUNT(*) AS total,
                     SUM(is_done = 1) AS done,
                     SUM(is_blocking = 1 AND is_done = 0) AS blocking_open
-               FROM offboarding_tasks WHERE user_id = :u',
-            ['u' => $userId]
+                FROM offboarding_tasks WHERE user_id = :u1',
+            ['u1' => $userId]
         ) ?? ['total' => 0, 'done' => 0, 'blocking_open' => 0];
 
         $total = (int) $row['total'];

@@ -31,8 +31,8 @@ final class NoticeBoard
     public static function feed(int $apartmentId, int $userId, int $limit = 30): array
     {
         $me = Database::one(
-            'SELECT room_id, duty_group_id, role FROM users WHERE id = :u',
-            ['u' => $userId]
+            'SELECT room_id, duty_group_id, role FROM users WHERE id = :u1',
+            ['u1' => $userId]
         ) ?? ['room_id' => null, 'duty_group_id' => null, 'role' => 'resident'];
 
         $rows = Database::all(
@@ -89,8 +89,8 @@ final class NoticeBoard
         }
         $row = self::decorate($row);
         $row['is_read'] = Database::value(
-            'SELECT 1 FROM announcement_reads WHERE announcement_id = :n AND user_id = :u',
-            ['n' => $id, 'u' => $viewerId]
+            'SELECT 1 FROM announcement_reads WHERE announcement_id = :n AND user_id = :u1',
+            ['n' => $id, 'u1' => $viewerId]
         ) !== null;
         return $row;
     }
@@ -179,8 +179,8 @@ final class NoticeBoard
     {
         Database::query(
             'INSERT IGNORE INTO announcement_reads (announcement_id, user_id, read_at)
-                  VALUES (:n, :u, UTC_TIMESTAMP())',
-            ['n' => $id, 'u' => $userId]
+                  VALUES (:n, :u1, UTC_TIMESTAMP())',
+            ['n' => $id, 'u1' => $userId]
         );
         Database::query('UPDATE announcements SET view_count = view_count + 1 WHERE id = :n', ['n' => $id]);
     }
@@ -191,9 +191,9 @@ final class NoticeBoard
             Database::all(
                 'SELECT n.id FROM announcements n
                   WHERE n.apartment_id = :a
-                    AND NOT EXISTS (SELECT 1 FROM announcement_reads ar
-                                     WHERE ar.announcement_id = n.id AND ar.user_id = :u)',
-                ['a' => $apartmentId, 'u' => $userId]
+                     AND NOT EXISTS (SELECT 1 FROM announcement_reads ar
+                                      WHERE ar.announcement_id = n.id AND ar.user_id = :u1)',
+                ['a' => $apartmentId, 'u1' => $userId]
             ),
             'id'
         );
@@ -206,8 +206,8 @@ final class NoticeBoard
     public static function unreadCount(int $apartmentId, int $userId): int
     {
         $me = Database::one(
-            'SELECT room_id, duty_group_id, role FROM users WHERE id = :u',
-            ['u' => $userId]
+            'SELECT room_id, duty_group_id, role FROM users WHERE id = :u1',
+            ['u1' => $userId]
         ) ?? ['room_id' => null, 'duty_group_id' => null, 'role' => 'resident'];
 
         // Counted in SQL rather than over feed(), which caps at 100 rows and
@@ -218,14 +218,14 @@ final class NoticeBoard
               WHERE n.apartment_id = :a
                 AND (n.expires_at IS NULL OR n.expires_at > UTC_TIMESTAMP())
                 AND NOT EXISTS (SELECT 1 FROM announcement_reads ar
-                                 WHERE ar.announcement_id = n.id AND ar.user_id = :u)
+                                  WHERE ar.announcement_id = n.id AND ar.user_id = :u1)
                 AND (n.audience = "everyone"
-                     OR (n.audience = "admins"   AND :role = "admin")
-                     OR (n.audience = "room"     AND n.audience_room_id = :room)
-                     OR (n.audience = "duty_group" AND n.audience_group_id = :grp))',
+                      OR (n.audience = "admins"   AND :role = "admin")
+                      OR (n.audience = "room"     AND n.audience_room_id = :room)
+                      OR (n.audience = "duty_group" AND n.audience_group_id = :grp))',
             [
                 'a'    => $apartmentId,
-                'u'    => $userId,
+                'u1'   => $userId,
                 'role' => $me['role'],
                 'room' => $me['room_id'] === null ? 0 : (int) $me['room_id'],
                 'grp'  => $me['duty_group_id'] === null ? 0 : (int) $me['duty_group_id'],
